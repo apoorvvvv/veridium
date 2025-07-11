@@ -426,47 +426,63 @@ def verify_registration():
         # Get and validate challenge
         challenge = Challenge.query.filter_by(id=challenge_id).first()
         if not challenge or not challenge.is_valid():
+            app.logger.error(f"Invalid challenge ID {challenge_id}")
             return jsonify({'verified': False, 'error': 'Invalid or expired challenge'})
         
         # Get user
         user = User.query.filter_by(id=challenge.user_id).first()
         if not user:
+            app.logger.error(f"User not found for challenge {challenge_id}")
             return jsonify({'verified': False, 'error': 'User not found'})
         
-        # Verify registration - use correct attribute access
-        verification = verify_registration_response(
-            credential=credential,
-            expected_challenge=challenge.challenge,
-            expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
-            expected_rp_id=Config.get_webauthn_rp_id(),
-        )
+        # Decode clientDataJSON and authenticatorData if not already (lib expects strings)
+        if 'response' in credential:
+            response = credential['response']
+            if 'clientDataJSON' in response:
+                response['clientDataJSON'] = base64.urlsafe_b64decode(response['clientDataJSON']).decode('utf-8')
+            if 'attestationObject' in response:
+                response['attestationObject'] = base64.urlsafe_b64decode(response['attestationObject'])
         
-        # Check verification.verified (correct attribute)
-        if getattr(verification, 'verified', False):  # Safe access with default False
-            # Store the credential
-            cred = Credential(
-                user_id=user.id,
-                credential_id=verification.credential_id,
-                public_key=verification.credential_public_key,
-                sign_count=verification.sign_count,
-                transports=credential.get('response', {}).get('transports', [])
+        # Verify
+        try:
+            verification = verify_registration_response(
+                credential=credential,
+                expected_challenge=challenge.challenge,  # Already bytes from DB
+                expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
+                expected_rp_id=Config.get_webauthn_rp_id(),
             )
-            db.session.add(cred)
             
-            # Mark challenge as used
-            challenge.used = True
-            db.session.commit()
-            
-            return jsonify({
-                'verified': True,
-                'user_id': user.user_id,
-                'credential_id': base64.urlsafe_b64encode(verification.credential_id).decode('utf-8')
-            })
-        else:
-            return jsonify({'verified': False, 'error': 'Verification failed'})
+            if verification.verified:
+                # Store credential
+                cred = Credential(
+                    user_id=user.id,
+                    credential_id=verification.credential_id,
+                    public_key=verification.credential_public_key,
+                    sign_count=verification.sign_count,
+                    transports=credential.get('response', {}).get('transports', [])
+                )
+                db.session.add(cred)
+                
+                challenge.used = True
+                db.session.commit()
+                
+                app.logger.info(f"Registration success for user {user.user_id}")
+                return jsonify({
+                    'verified': True,
+                    'user_id': user.user_id,
+                    'credential_id': base64.urlsafe_b64encode(verification.credential_id).decode('utf-8')
+                })
+            else:
+                app.logger.error(f"Verification failed for {user.user_id}: No verified attribute")
+                return jsonify({'verified': False, 'error': 'Verification failed'})
+        
+        except Exception as verify_e:
+            app.logger.error(f"Verify exception: {str(verify_e)}")
+            return jsonify({'verified': False, 'error': f'Library error: {str(verify_e)}'})
             
     except Exception as e:
         db.session.rollback()
+        app.logger.error(f"Registration error: {str(e)}")
         return jsonify({'verified': False, 'error': str(e)})
 
 @app.route('/api/begin_authentication', methods=['POST'])
