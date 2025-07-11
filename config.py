@@ -9,10 +9,10 @@ class Config:
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///veridium.db'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
-    # WebAuthn configuration - use network IP for cross-device testing
-    WEBAUTHN_RP_ID = os.environ.get('WEBAUTHN_RP_ID') or '192.168.29.237'
+    # WebAuthn configuration - auto-configured based on environment
+    WEBAUTHN_RP_ID = os.environ.get('WEBAUTHN_RP_ID') or 'localhost'
     WEBAUTHN_RP_NAME = os.environ.get('WEBAUTHN_RP_NAME') or 'Veridium'
-    WEBAUTHN_RP_ORIGIN = os.environ.get('WEBAUTHN_RP_ORIGIN') or 'http://192.168.29.237:5001'
+    WEBAUTHN_RP_ORIGIN = os.environ.get('WEBAUTHN_RP_ORIGIN') or 'http://localhost:5001'
     
     # Cross-device session configuration
     SESSION_TIMEOUT = timedelta(minutes=5)  # QR code session timeout

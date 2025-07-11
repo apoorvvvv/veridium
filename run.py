@@ -19,21 +19,35 @@ def setup_environment():
     host = os.environ.get('HOST', '0.0.0.0')
     port = int(os.environ.get('PORT', 5001))
     
-    # Set WebAuthn configuration based on environment
-    if os.environ.get('RENDER'):  # Render deployment
-        base_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'your-app.onrender.com')}"
-        os.environ.setdefault('WEBAUTHN_RP_ID', os.environ.get('RENDER_EXTERNAL_HOSTNAME', 'your-app.onrender.com'))
-        os.environ.setdefault('WEBAUTHN_RP_ORIGIN', base_url)
-        os.environ.setdefault('CORS_ORIGINS', base_url)
+    # Auto-detect deployment environment and configure WebAuthn
+    render_hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
+    
+    # Check if we're on Render by looking for Render-specific environment variables
+    is_render = os.environ.get('RENDER') or os.environ.get('RENDER_SERVICE_NAME') or render_hostname
+    
+    if is_render:  # Render deployment
+        # Use the actual Render hostname or fallback to veridium.onrender.com
+        domain = render_hostname or 'veridium.onrender.com'
+        base_url = f"https://{domain}"
+        
+        # Force set the environment variables for Render
+        os.environ['WEBAUTHN_RP_ID'] = domain
+        os.environ['WEBAUTHN_RP_ORIGIN'] = base_url
+        os.environ['CORS_ORIGINS'] = f"{base_url},*"
+        
+        print(f"🌐 Render Environment Detected")
+        print(f"📡 Domain: {domain}")
+        print(f"🔗 Base URL: {base_url}")
+        
     else:  # Local development
         if not os.environ.get('WEBAUTHN_RP_ID'):
-            os.environ['WEBAUTHN_RP_ID'] = '192.168.29.237'
+            os.environ['WEBAUTHN_RP_ID'] = 'localhost'
         
         if not os.environ.get('WEBAUTHN_RP_ORIGIN'):
-            os.environ['WEBAUTHN_RP_ORIGIN'] = 'http://192.168.29.237:5001'
+            os.environ['WEBAUTHN_RP_ORIGIN'] = 'http://localhost:5001'
         
         if not os.environ.get('CORS_ORIGINS'):
-            os.environ['CORS_ORIGINS'] = 'http://192.168.29.237:5001,http://localhost:5001,http://127.0.0.1:5001'
+            os.environ['CORS_ORIGINS'] = 'http://localhost:5001,http://127.0.0.1:5001'
     
     if not os.environ.get('WEBAUTHN_RP_NAME'):
         os.environ['WEBAUTHN_RP_NAME'] = 'Veridium'
