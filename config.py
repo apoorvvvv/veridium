@@ -9,10 +9,18 @@ class Config:
     SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or 'sqlite:///veridium.db'
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
-    # WebAuthn configuration - auto-configured based on environment
-    WEBAUTHN_RP_ID = os.environ.get('WEBAUTHN_RP_ID') or 'localhost'
-    WEBAUTHN_RP_NAME = os.environ.get('WEBAUTHN_RP_NAME') or 'Veridium'
-    WEBAUTHN_RP_ORIGIN = os.environ.get('WEBAUTHN_RP_ORIGIN') or 'http://localhost:5001'
+    # WebAuthn configuration - dynamically loaded from environment
+    @property
+    def WEBAUTHN_RP_ID(self):
+        return os.environ.get('WEBAUTHN_RP_ID') or 'localhost'
+    
+    @property
+    def WEBAUTHN_RP_NAME(self):
+        return os.environ.get('WEBAUTHN_RP_NAME') or 'Veridium'
+    
+    @property  
+    def WEBAUTHN_RP_ORIGIN(self):
+        return os.environ.get('WEBAUTHN_RP_ORIGIN') or 'http://localhost:5001'
     
     # Cross-device session configuration
     SESSION_TIMEOUT = timedelta(minutes=5)  # QR code session timeout
@@ -30,10 +38,12 @@ class Config:
     # SocketIO configuration
     SOCKETIO_ASYNC_MODE = 'threading'
     
-    @staticmethod
-    def get_webauthn_rp_id():
+    @classmethod
+    def get_webauthn_rp_id(cls):
         """Get the WebAuthn Relying Party ID, removing protocol and port if present"""
-        rp_origin = Config.WEBAUTHN_RP_ORIGIN
+        # Create an instance to access properties
+        instance = cls()
+        rp_origin = instance.WEBAUTHN_RP_ORIGIN
         if rp_origin.startswith('https://'):
             rp_origin = rp_origin[8:]
         elif rp_origin.startswith('http://'):

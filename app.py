@@ -25,6 +25,9 @@ from security import init_security, require_rate_limit, require_webauthn_securit
 app = Flask(__name__)
 app.config.from_object(Config)
 
+# Create config instance for WebAuthn properties
+config_instance = Config()
+
 # Initialize extensions
 db.init_app(app)
 CORS(app, origins=app.config['CORS_ORIGINS'])
@@ -378,7 +381,7 @@ def begin_registration():
         # Generate registration options
         options = generate_registration_options(
             rp_id=Config.get_webauthn_rp_id(),
-            rp_name=Config.WEBAUTHN_RP_NAME,
+            rp_name=config_instance.WEBAUTHN_RP_NAME,
             user_id=user.user_id.encode('utf-8'),
             user_name=user.user_name,
             user_display_name=user.display_name,
@@ -434,7 +437,7 @@ def verify_registration():
         verification = verify_registration_response(
             credential=credential,
             expected_challenge=challenge.challenge,
-            expected_origin=Config.WEBAUTHN_RP_ORIGIN,
+            expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
             expected_rp_id=Config.get_webauthn_rp_id(),
         )
         
@@ -547,7 +550,7 @@ def verify_authentication():
         verification = verify_authentication_response(
             credential=credential,
             expected_challenge=challenge.challenge,
-            expected_origin=Config.WEBAUTHN_RP_ORIGIN,
+            expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
             expected_rp_id=Config.get_webauthn_rp_id(),
             credential_public_key=db_credential.public_key,
             credential_current_sign_count=db_credential.sign_count,
@@ -583,7 +586,7 @@ def generate_qr():
         # Create a new cross-device session
         session_data = {
             'session_id': secrets.token_urlsafe(32),
-            'origin': Config.WEBAUTHN_RP_ORIGIN,
+            'origin': config_instance.WEBAUTHN_RP_ORIGIN,
             'timestamp': datetime.utcnow().isoformat()
         }
         
@@ -595,7 +598,7 @@ def generate_qr():
         db.session.commit()
         
         # Generate QR code
-        qr_data = f"{Config.WEBAUTHN_RP_ORIGIN}/qr/{session_obj.session_id}"
+        qr_data = f"{config_instance.WEBAUTHN_RP_ORIGIN}/qr/{session_obj.session_id}"
         qr = qrcode.QRCode(version=1, box_size=10, border=5)
         qr.add_data(qr_data)
         qr.make(fit=True)

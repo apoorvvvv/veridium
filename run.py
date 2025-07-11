@@ -23,7 +23,16 @@ def setup_environment():
     render_hostname = os.environ.get('RENDER_EXTERNAL_HOSTNAME')
     
     # Check if we're on Render by looking for Render-specific environment variables
-    is_render = os.environ.get('RENDER') or os.environ.get('RENDER_SERVICE_NAME') or render_hostname
+    # Render sets these environment variables automatically
+    is_render = (
+        os.environ.get('RENDER') or 
+        os.environ.get('RENDER_SERVICE_NAME') or 
+        os.environ.get('RENDER_EXTERNAL_HOSTNAME') or
+        os.environ.get('RENDER_SERVICE_ID') or
+        'onrender.com' in os.environ.get('RENDER_EXTERNAL_URL', '') or
+        # Fallback: check if we're running on a .onrender.com domain
+        'onrender.com' in host
+    )
     
     if is_render:  # Render deployment
         # Use the actual Render hostname or fallback to veridium.onrender.com
@@ -38,6 +47,12 @@ def setup_environment():
         print(f"🌐 Render Environment Detected")
         print(f"📡 Domain: {domain}")
         print(f"🔗 Base URL: {base_url}")
+        print(f"🔍 Environment check: RENDER={os.environ.get('RENDER')}, RENDER_EXTERNAL_HOSTNAME={render_hostname}")
+        
+        # Extra safety: Also set in config
+        import os
+        os.environ.setdefault('WEBAUTHN_RP_ID', domain)
+        os.environ.setdefault('WEBAUTHN_RP_ORIGIN', base_url)
         
     else:  # Local development
         if not os.environ.get('WEBAUTHN_RP_ID'):
