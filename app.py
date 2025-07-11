@@ -435,7 +435,7 @@ def verify_registration():
             app.logger.error(f"User not found for challenge {challenge_id}")
             return jsonify({'verified': False, 'error': 'User not found'})
         
-        # Verify registration - the webauthn library expects base64url strings from JS
+        # Verify registration - py-webauthn v2.x either succeeds or raises exception
         try:
             verification = verify_registration_response(
                 credential=credential,
@@ -444,34 +444,30 @@ def verify_registration():
                 expected_rp_id=Config.get_webauthn_rp_id(),
             )
             
-            # Check if verification was successful
-            if getattr(verification, 'verified', False):
-                # Store credential
-                cred = Credential(
-                    user_id=user.id,
-                    credential_id=verification.credential_id,
-                    public_key=verification.credential_public_key,
-                    sign_count=verification.sign_count,
-                    transports=credential.get('response', {}).get('transports', [])
-                )
-                db.session.add(cred)
-                
-                challenge.used = True
-                db.session.commit()
-                
-                app.logger.info(f"Registration success for user {user.user_id}")
-                return jsonify({
-                    'verified': True,
-                    'user_id': user.user_id,
-                    'credential_id': base64.urlsafe_b64encode(verification.credential_id).decode('utf-8')
-                })
-            else:
-                app.logger.error(f"Verification failed for {user.user_id}: verification.verified = {getattr(verification, 'verified', 'NOT_FOUND')}")
-                return jsonify({'verified': False, 'error': 'Verification failed'})
+            # If we reach here, verification succeeded
+            # Store credential
+            cred = Credential(
+                user_id=user.id,
+                credential_id=verification.credential_id,
+                public_key=verification.credential_public_key,
+                sign_count=verification.sign_count,
+                transports=credential.get('response', {}).get('transports', [])
+            )
+            db.session.add(cred)
+            
+            challenge.used = True
+            db.session.commit()
+            
+            app.logger.info(f"Registration success for user {user.user_id}")
+            return jsonify({
+                'verified': True,
+                'user_id': user.user_id,
+                'credential_id': base64.urlsafe_b64encode(verification.credential_id).decode('utf-8')
+            })
         
         except Exception as verify_e:
-            app.logger.error(f"Verify exception: {str(verify_e)}")
-            return jsonify({'verified': False, 'error': f'Library error: {str(verify_e)}'})
+            app.logger.error(f"WebAuthn verification failed for {user.user_id}: {str(verify_e)}")
+            return jsonify({'verified': False, 'error': f'Verification failed: {str(verify_e)}'})
             
     except Exception as e:
         db.session.rollback()
@@ -556,17 +552,18 @@ def verify_authentication():
         if not db_credential:
             return jsonify({'verified': False, 'error': 'Credential not found'})
         
-        # Verify authentication
-        verification = verify_authentication_response(
-            credential=credential,
-            expected_challenge=challenge.challenge,
-            expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
-            expected_rp_id=Config.get_webauthn_rp_id(),
-            credential_public_key=db_credential.public_key,
-            credential_current_sign_count=db_credential.sign_count,
-        )
-        
-        if getattr(verification, 'verified', False):
+        # Verify authentication - py-webauthn v2.x either succeeds or raises exception
+        try:
+            verification = verify_authentication_response(
+                credential=credential,
+                expected_challenge=challenge.challenge,
+                expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
+                expected_rp_id=Config.get_webauthn_rp_id(),
+                credential_public_key=db_credential.public_key,
+                credential_current_sign_count=db_credential.sign_count,
+            )
+            
+            # If we reach here, verification succeeded
             # Update credential sign count and last used
             db_credential.sign_count = verification.new_sign_count
             db_credential.last_used = datetime.utcnow()
@@ -583,8 +580,10 @@ def verify_authentication():
                 'user_id': user.user_id,
                 'last_login': user.last_login.isoformat()
             })
-        else:
-            return jsonify({'verified': False, 'error': 'Verification failed'})
+            
+        except Exception as verify_e:
+            app.logger.error(f"WebAuthn authentication failed for {user.user_id}: {str(verify_e)}")
+            return jsonify({'verified': False, 'error': f'Authentication failed: {str(verify_e)}'})
             
     except Exception as e:
         db.session.rollback()
