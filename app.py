@@ -435,15 +435,7 @@ def verify_registration():
             app.logger.error(f"User not found for challenge {challenge_id}")
             return jsonify({'verified': False, 'error': 'User not found'})
         
-        # Decode clientDataJSON and authenticatorData if not already (lib expects strings)
-        if 'response' in credential:
-            response = credential['response']
-            if 'clientDataJSON' in response:
-                response['clientDataJSON'] = base64.urlsafe_b64decode(response['clientDataJSON']).decode('utf-8')
-            if 'attestationObject' in response:
-                response['attestationObject'] = base64.urlsafe_b64decode(response['attestationObject'])
-        
-        # Verify
+        # Verify registration - the webauthn library expects base64url strings from JS
         try:
             verification = verify_registration_response(
                 credential=credential,
@@ -452,7 +444,8 @@ def verify_registration():
                 expected_rp_id=Config.get_webauthn_rp_id(),
             )
             
-            if verification.verified:
+            # Check if verification was successful
+            if getattr(verification, 'verified', False):
                 # Store credential
                 cred = Credential(
                     user_id=user.id,
@@ -473,7 +466,7 @@ def verify_registration():
                     'credential_id': base64.urlsafe_b64encode(verification.credential_id).decode('utf-8')
                 })
             else:
-                app.logger.error(f"Verification failed for {user.user_id}: No verified attribute")
+                app.logger.error(f"Verification failed for {user.user_id}: verification.verified = {getattr(verification, 'verified', 'NOT_FOUND')}")
                 return jsonify({'verified': False, 'error': 'Verification failed'})
         
         except Exception as verify_e:
@@ -573,7 +566,7 @@ def verify_authentication():
             credential_current_sign_count=db_credential.sign_count,
         )
         
-        if verification.verified:
+        if getattr(verification, 'verified', False):
             # Update credential sign count and last used
             db_credential.sign_count = verification.new_sign_count
             db_credential.last_used = datetime.utcnow()
