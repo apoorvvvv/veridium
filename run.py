@@ -47,7 +47,7 @@ def setup_environment():
             os.environ['WEBAUTHN_RP_ORIGIN'] = 'http://localhost:5001'
         
         if not os.environ.get('CORS_ORIGINS'):
-            os.environ['CORS_ORIGINS'] = 'http://localhost:5001,http://127.0.0.1:5001'
+            os.environ['CORS_ORIGINS'] = 'http://localhost:5001,http://127.0.0.1:5001,http://localhost:*,http://127.0.0.1:*'
     
     if not os.environ.get('WEBAUTHN_RP_NAME'):
         os.environ['WEBAUTHN_RP_NAME'] = 'Veridium'
