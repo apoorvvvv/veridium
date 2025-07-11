@@ -415,7 +415,7 @@ def begin_registration():
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/verify_registration', methods=['POST'])
-@require_rate_limit(limit=10, window=300)  # 10 verifications per 5 minutes
+@require_rate_limit(limit=10, window=300)
 @require_webauthn_security()
 def verify_registration():
     try:
@@ -433,7 +433,7 @@ def verify_registration():
         if not user:
             return jsonify({'verified': False, 'error': 'User not found'})
         
-        # Verify registration
+        # Verify registration - use correct attribute access
         verification = verify_registration_response(
             credential=credential,
             expected_challenge=challenge.challenge,
@@ -441,7 +441,8 @@ def verify_registration():
             expected_rp_id=Config.get_webauthn_rp_id(),
         )
         
-        if verification.verified:
+        # Check verification.verified (correct attribute)
+        if getattr(verification, 'verified', False):  # Safe access with default False
             # Store the credential
             cred = Credential(
                 user_id=user.id,
