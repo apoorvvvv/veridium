@@ -29,7 +29,7 @@ git push -u origin main
 4. **Configure the service:**
    - **Name:** `veridium`
    - **Build Command:** `pip install -r requirements.txt`
-   - **Start Command:** `python run.py`
+   - **Start Command:** `gunicorn app:app --bind 0.0.0.0:$PORT --workers 4`
    - **Environment:** `Python 3`
 
 ### 3. Set Environment Variables
