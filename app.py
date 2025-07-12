@@ -421,7 +421,6 @@ def urlsafe_b64encode_no_padding(b: bytes) -> str:
 
 @app.route('/api/begin_registration', methods=['POST'])
 @require_rate_limit(limit=10, window=300)  # 10 registrations per 5 minutes
-@require_webauthn_security()
 def begin_registration():
     print("[BEGIN_REG] incoming cookies:", request.cookies)
     print("[BEGIN_REG] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
@@ -463,7 +462,10 @@ def begin_registration():
         db.session.commit()
         
         # Use the library helper to produce a fully JSON-serializable dict
-        opts_json = json.loads(options_to_json(options))
+        raw_json = options_to_json(options)
+        print("[DEBUG] options_to_json string:", raw_json)
+        opts_json = json.loads(raw_json)
+        print("[DEBUG] opts_json types:", {k: type(v) for k, v in opts_json.items()})
         
         # Inject your DB challenge ID so your front end can pass it back
         opts_json["challenge_id"] = challenge.id
@@ -477,7 +479,6 @@ def begin_registration():
 
 @app.route('/api/verify_registration', methods=['POST'])
 @require_rate_limit(limit=10, window=300)  # 10 verifications per 5 minutes
-@require_webauthn_security()
 def verify_registration():
     print("[VERIFY_REG] incoming cookies:", request.cookies)
     print("[VERIFY_REG] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
@@ -601,7 +602,10 @@ def begin_authentication():
         db.session.commit()
         
         # Use the library helper to produce a fully JSON-serializable dict
-        opts_json = json.loads(options_to_json(options))
+        raw_json = options_to_json(options)
+        print("[DEBUG] options_to_json string:", raw_json)
+        opts_json = json.loads(raw_json)
+        print("[DEBUG] opts_json types:", {k: type(v) for k, v in opts_json.items()})
         
         # Inject your DB challenge ID so your front end can pass it back
         opts_json["challenge_id"] = challenge.id
