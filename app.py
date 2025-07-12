@@ -435,17 +435,34 @@ def verify_registration():
             app.logger.error(f"User not found for challenge {challenge_id}")
             return jsonify({'verified': False, 'error': 'User not found'})
         
-        # Verify registration - py-webauthn v2.x either succeeds or raises exception
+        # Fix base64 padding and decode
+        def add_padding(b64_str):
+            return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
+        
+        response = credential.get('response', {})
+        if 'clientDataJSON' in response:
+            client_data = add_padding(response['clientDataJSON'])
+            response['clientDataJSON'] = base64.urlsafe_b64decode(client_data).decode('utf-8')
+        if 'attestationObject' in response:
+            att_obj = add_padding(response['attestationObject'])
+            response['attestationObject'] = base64.urlsafe_b64decode(att_obj)
+        if 'id' in credential:
+            credential['id'] = add_padding(credential['id'])
+        
+        # Verify with require_user_verification=True to force biometrics
         try:
             verification = verify_registration_response(
                 credential=credential,
-                expected_challenge=challenge.challenge,  # Already bytes from DB
+                expected_challenge=challenge.challenge,
                 expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
                 expected_rp_id=Config.get_webauthn_rp_id(),
+                require_user_verification=True,  # Force biometric verification
+                supported_attestation_formats=['packed', 'tpm', 'android-key', 'android-safetynet', 'fido-u2f', 'apple', 'none']
             )
             
-            # If we reach here, verification succeeded
-            # Store credential
+            app.logger.info(f"Registration verification success for user {user.user_id}")
+            
+            # Store the credential
             cred = Credential(
                 user_id=user.id,
                 credential_id=verification.credential_id,
@@ -455,23 +472,23 @@ def verify_registration():
             )
             db.session.add(cred)
             
+            # Mark challenge as used
             challenge.used = True
             db.session.commit()
             
-            app.logger.info(f"Registration success for user {user.user_id}")
             return jsonify({
                 'verified': True,
                 'user_id': user.user_id,
                 'credential_id': base64.urlsafe_b64encode(verification.credential_id).decode('utf-8')
             })
-        
-        except Exception as verify_e:
-            app.logger.error(f"WebAuthn verification failed for {user.user_id}: {str(verify_e)}")
-            return jsonify({'verified': False, 'error': f'Verification failed: {str(verify_e)}'})
+            
+        except Exception as verify_error:
+            app.logger.error(f"WebAuthn verification failed for user {user.user_id}: {str(verify_error)}")
+            return jsonify({'verified': False, 'error': f'Verification failed: {str(verify_error)}'})
             
     except Exception as e:
-        db.session.rollback()
         app.logger.error(f"Registration error: {str(e)}")
+        db.session.rollback()
         return jsonify({'verified': False, 'error': str(e)})
 
 @app.route('/api/begin_authentication', methods=['POST'])
@@ -528,31 +545,55 @@ def begin_authentication():
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/verify_authentication', methods=['POST'])
-@require_rate_limit(limit=20, window=300)  # 20 verifications per 5 minutes
+@require_rate_limit(limit=10, window=300)  # 10 authentications per 5 minutes
 @require_webauthn_security()
 def verify_authentication():
     try:
         data = request.get_json()
         credential = data.get('credential')
-        user_id = data.get('user_id')
         challenge_id = data.get('challenge_id')
         
         # Get and validate challenge
         challenge = Challenge.query.filter_by(id=challenge_id).first()
         if not challenge or not challenge.is_valid():
+            app.logger.error(f"Invalid challenge ID {challenge_id}")
             return jsonify({'verified': False, 'error': 'Invalid or expired challenge'})
         
-        # Get user and credential
-        user = User.query.filter_by(user_id=user_id).first()
+        # Get user
+        user = User.query.filter_by(id=challenge.user_id).first()
         if not user:
+            app.logger.error(f"User not found for challenge {challenge_id}")
             return jsonify({'verified': False, 'error': 'User not found'})
         
-        credential_id = base64.urlsafe_b64decode(credential['id'])
-        db_credential = Credential.query.filter_by(credential_id=credential_id).first()
+        # Get credential from database
+        credential_id = base64.urlsafe_b64decode(credential.get('id', ''))
+        db_credential = Credential.query.filter_by(
+            user_id=user.id,
+            credential_id=credential_id
+        ).first()
+        
         if not db_credential:
+            app.logger.error(f"Credential not found for user {user.user_id}")
             return jsonify({'verified': False, 'error': 'Credential not found'})
         
-        # Verify authentication - py-webauthn v2.x either succeeds or raises exception
+        # Fix base64 padding and decode
+        def add_padding(b64_str):
+            return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
+        
+        response = credential.get('response', {})
+        if 'clientDataJSON' in response:
+            client_data = add_padding(response['clientDataJSON'])
+            response['clientDataJSON'] = base64.urlsafe_b64decode(client_data).decode('utf-8')
+        if 'authenticatorData' in response:
+            auth_data = add_padding(response['authenticatorData'])
+            response['authenticatorData'] = base64.urlsafe_b64decode(auth_data)
+        if 'signature' in response:
+            signature = add_padding(response['signature'])
+            response['signature'] = base64.urlsafe_b64decode(signature)
+        if 'id' in credential:
+            credential['id'] = add_padding(credential['id'])
+        
+        # Verify authentication with require_user_verification=True
         try:
             verification = verify_authentication_response(
                 credential=credential,
@@ -561,9 +602,11 @@ def verify_authentication():
                 expected_rp_id=Config.get_webauthn_rp_id(),
                 credential_public_key=db_credential.public_key,
                 credential_current_sign_count=db_credential.sign_count,
+                require_user_verification=True  # Force biometric verification
             )
             
-            # If we reach here, verification succeeded
+            app.logger.info(f"Authentication verification success for user {user.user_id}")
+            
             # Update credential sign count and last used
             db_credential.sign_count = verification.new_sign_count
             db_credential.last_used = datetime.utcnow()
@@ -581,11 +624,12 @@ def verify_authentication():
                 'last_login': user.last_login.isoformat()
             })
             
-        except Exception as verify_e:
-            app.logger.error(f"WebAuthn authentication failed for {user.user_id}: {str(verify_e)}")
-            return jsonify({'verified': False, 'error': f'Authentication failed: {str(verify_e)}'})
+        except Exception as verify_error:
+            app.logger.error(f"WebAuthn authentication failed for user {user.user_id}: {str(verify_error)}")
+            return jsonify({'verified': False, 'error': f'Authentication failed: {str(verify_error)}'})
             
     except Exception as e:
+        app.logger.error(f"Authentication error: {str(e)}")
         db.session.rollback()
         return jsonify({'verified': False, 'error': str(e)})
 
