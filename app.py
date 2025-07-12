@@ -392,6 +392,7 @@ def begin_registration():
                 -7,  # ES256
                 -257,  # RS256
             ],
+            attestation="none",  # Fix: Set 'none' attestation to bypass attestationObject requirement
             timeout=60000
         )
         
