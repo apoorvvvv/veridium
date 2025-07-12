@@ -452,8 +452,8 @@ def verify_registration():
             att_obj = add_padding(response['attestationObject'])
             response['attestationObject'] = base64.urlsafe_b64decode(att_obj)
         else:
-            app.logger.warning("attestationObject not found - expected with attestation='none'")
-            response['attestationObject'] = b''  # Empty bytes as fallback
+            app.logger.warning("attestationObject missing - using empty bytes fallback for 'none'")
+            response['attestationObject'] = b''  # Fix: Empty bytes fallback for missing field
         if 'id' in credential:
             credential['id'] = add_padding(credential['id'])
         

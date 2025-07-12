@@ -1,6 +1,6 @@
 Flask>=2.3.3
 Flask-CORS>=4.0.0
-webauthn>=2.1.0
+webauthn==1.10.0
 qrcode>=7.4.2
 Pillow>=10.1.0
 SQLAlchemy>=2.0.23
