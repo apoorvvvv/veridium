@@ -6,7 +6,8 @@ from webauthn import generate_authentication_options, verify_authentication_resp
 from webauthn import options_to_json
 from webauthn.helpers.structs import (
     PublicKeyCredentialDescriptor,
-    AuthenticatorTransport
+    AuthenticatorTransport,
+    AttestationConveyancePreference
 )
 from webauthn.helpers.structs import AuthenticatorSelectionCriteria
 # COSEAlgorithmIdentifier not needed - using numeric values directly
@@ -392,7 +393,7 @@ def begin_registration():
                 -7,  # ES256
                 -257,  # RS256
             ],
-            attestation="none",  # Fix: Set 'none' attestation to bypass attestationObject requirement
+            attestation=AttestationConveyancePreference.NONE,  # Set 'none' attestation to bypass attestationObject requirement
             timeout=60000
         )
         
@@ -445,6 +446,7 @@ def verify_registration():
         # Log the credential structure for debugging
         app.logger.info(f"Credential keys: {list(credential.keys())}")
         app.logger.info(f"Response keys: {list(response.keys())}")
+        app.logger.info(f"Full credential structure: {json.dumps(credential, default=str)}")
         
         if 'clientDataJSON' in response:
             client_data = add_padding(response['clientDataJSON'])
@@ -458,13 +460,18 @@ def verify_registration():
             credential['id'] = add_padding(credential['id'])
         
         # Verify
-        verification = verify_registration_response(
-            credential=credential,
-            expected_challenge=challenge.challenge,
-            expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
-            expected_rp_id=Config.get_webauthn_rp_id(),
-            require_user_verification=True
-        )
+        try:
+            verification = verify_registration_response(
+                credential=credential,
+                expected_challenge=challenge.challenge,
+                expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
+                expected_rp_id=Config.get_webauthn_rp_id(),
+                require_user_verification=True
+            )
+        except Exception as verify_error:
+            app.logger.error(f"Verification error details: {str(verify_error)}")
+            app.logger.error(f"Verification error type: {type(verify_error)}")
+            raise verify_error
         
         if verification.verified:
             cred = Credential(
