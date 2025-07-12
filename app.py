@@ -214,38 +214,61 @@ HTML_TEMPLATE = '''
             setTimeout(() => statusDiv.innerHTML = '', 5000);
         }
         
+        // Debug logging functions for session/cookie tracking
+        async function debugBeginRegistration(payload) {
+            const res = await fetch("/api/begin_registration", {
+                method: "POST",
+                credentials: "include",        // ← must send/receive cookies
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify(payload),
+            });
+            const text = await res.text();
+            // Dump status, body, and current cookies into the DOM
+            document.body.insertAdjacentHTML("beforeend", `
+                <div style="padding:10px; border:2px solid red; margin:10px; background: #ffe6e6;">
+                    <strong>BEGIN_REG:</strong><br>
+                    status = ${res.status}<br>
+                    response = <pre>${text}</pre>
+                    document.cookie = "${document.cookie}"
+                </div>
+            `);
+            return JSON.parse(text);
+        }
+
+        async function debugVerifyRegistration(credential, challengeId) {
+            const res = await fetch("/api/verify_registration", {
+                method: "POST",
+                credentials: "include",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({credential, challenge_id: challengeId}),
+            });
+            const text = await res.text();
+            document.body.insertAdjacentHTML("beforeend", `
+                <div style="padding:10px; border:2px solid blue; margin:10px; background: #e6e6ff;">
+                    <strong>VERIFY_REG:</strong><br>
+                    status = ${res.status}<br>
+                    response = <pre>${text}</pre>
+                    document.cookie = "${document.cookie}"
+                </div>
+            `);
+            return JSON.parse(text);
+        }
+        
         async function register() {
             try {
                 showStatus('Starting registration...', 'info');
                 
-                const optionsResp = await fetch('/api/begin_registration', {
-                    method: 'POST',
-                    credentials: 'include', // <-- send/receive cookies
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        username: 'veridium_user_' + Date.now(),
-                        displayName: 'Veridium User'
-                    })
+                // Use debug functions to track cookies and responses
+                const options = await debugBeginRegistration({
+                    username: 'veridium_user_' + Date.now(),
+                    displayName: 'Veridium User'
                 });
                 
-                if (!optionsResp.ok) throw new Error('Registration failed');
-                
-                const options = await optionsResp.json();
                 showStatus('Please complete biometric authentication...', 'info');
                 
                 const credential = await SimpleWebAuthnBrowser.startRegistration(options);
                 
-                const verifyResp = await fetch('/api/verify_registration', {
-                    method: 'POST',
-                    credentials: 'include', // <-- send/receive cookies
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        credential: credential,
-                        challenge_id: options.challenge_id
-                    })
-                });
-                
-                const result = await verifyResp.json();
+                const result = await debugVerifyRegistration(credential, options.challenge_id);
                 
                 if (result.verified) {
                     localStorage.setItem('veridium_user_id', result.user_id);
