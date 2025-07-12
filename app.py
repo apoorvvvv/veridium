@@ -392,6 +392,7 @@ def begin_registration():
                 -7,  # ES256
                 -257,  # RS256
             ],
+            attestation="none",  # Fix: Set 'none' attestation to bypass attestationObject requirement
             timeout=60000
         )
         
@@ -440,12 +441,19 @@ def verify_registration():
             return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
         
         response = credential.get('response', {})
+        
+        # Log the credential structure for debugging
+        app.logger.info(f"Credential keys: {list(credential.keys())}")
+        app.logger.info(f"Response keys: {list(response.keys())}")
+        
         if 'clientDataJSON' in response:
             client_data = add_padding(response['clientDataJSON'])
             response['clientDataJSON'] = base64.urlsafe_b64decode(client_data).decode('utf-8')
         if 'attestationObject' in response:
             att_obj = add_padding(response['attestationObject'])
             response['attestationObject'] = base64.urlsafe_b64decode(att_obj)
+        else:
+            app.logger.warning("attestationObject not found in response - this is expected with attestation='none'")
         if 'id' in credential:
             credential['id'] = add_padding(credential['id'])
         
