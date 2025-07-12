@@ -5,12 +5,13 @@ from webauthn import generate_registration_options, verify_registration_response
 from webauthn import generate_authentication_options, verify_authentication_response
 from webauthn import options_to_json
 from webauthn.helpers.structs import (
+    AuthenticatorSelectionCriteria,
+    UserVerificationRequirement,
     PublicKeyCredentialDescriptor,
     AuthenticatorTransport,
-    AttestationConveyancePreference
+    AttestationConveyancePreference  # Add this import
 )
-from webauthn.helpers.structs import AuthenticatorSelectionCriteria
-# COSEAlgorithmIdentifier not needed - using numeric values directly
+from webauthn.helpers.cose import COSEAlgorithmIdentifier
 import json
 import base64
 import qrcode
@@ -460,6 +461,8 @@ def verify_registration():
             response['attestationObject'] = base64.urlsafe_b64decode(att_obj)
         else:
             app.logger.warning("attestationObject not found in response - this is expected with attestation='none'")
+            # Add fallback for devices that force direct attestation
+            response['attestationObject'] = b''  # Empty bytes as fallback
         if 'id' in credential:
             credential['id'] = add_padding(credential['id'])
         
@@ -535,7 +538,7 @@ def begin_authentication():
         options = generate_authentication_options(
             rp_id=Config.get_webauthn_rp_id(),
             allow_credentials=allowed_credentials,
-            user_verification="required",  # This parameter name is correct for authentication
+            user_verification=UserVerificationRequirement.REQUIRED,
             timeout=60000
         )
         
