@@ -415,6 +415,10 @@ HTML_TEMPLATE = '''
 def home():
     return render_template_string(HTML_TEMPLATE)
 
+def urlsafe_b64encode_no_padding(b: bytes) -> str:
+    """Convert bytes to base64-url-safe string without padding"""
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
+
 @app.route('/api/begin_registration', methods=['POST'])
 @require_rate_limit(limit=10, window=300)  # 10 registrations per 5 minutes
 @require_webauthn_security()
@@ -458,14 +462,32 @@ def begin_registration():
         db.session.add(challenge)
         db.session.commit()
         
-        # Convert to JSON-serializable format using webauthn helper
-        options_json = json.loads(options_to_json(options))
-        options_json['challenge_id'] = challenge.id
+        # Manually build a JSON-serializable dict with proper bytes encoding
+        opts_dict = {
+            "challenge": urlsafe_b64encode_no_padding(options.challenge),
+            "rp": {
+                "id": options.rp.id,
+                "name": options.rp.name
+            },
+            "user": {
+                "id": urlsafe_b64encode_no_padding(options.user.id),
+                "name": options.user.name,
+                "displayName": options.user.display_name,
+            },
+            "pubKeyCredParams": options.pub_key_cred_params,
+            "timeout": options.timeout,
+            "attestation": options.attestation,
+            "authenticatorSelection": {
+                "userVerification": options.authenticator_selection.user_verification
+            },
+            "challenge_id": challenge.id
+        }
         
-        return jsonify(options_json)
+        return jsonify(opts_dict)
         
     except Exception as e:
         db.session.rollback()
+        app.logger.error(f"Registration error: {str(e)}")
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/verify_registration', methods=['POST'])
@@ -593,11 +615,23 @@ def begin_authentication():
         db.session.add(challenge)
         db.session.commit()
         
-        # Convert to JSON-serializable format using webauthn helper
-        options_json = json.loads(options_to_json(options))
-        options_json['challenge_id'] = challenge.id
+        # Manually build a JSON-serializable dict with proper bytes encoding
+        opts_dict = {
+            "challenge": urlsafe_b64encode_no_padding(options.challenge),
+            "rpId": options.rp_id,
+            "allowCredentials": [
+                {
+                    "id": urlsafe_b64encode_no_padding(cred.id),
+                    "type": cred.type,
+                    "transports": cred.transports
+                } for cred in options.allow_credentials
+            ],
+            "userVerification": options.user_verification,
+            "timeout": options.timeout,
+            "challenge_id": challenge.id
+        }
         
-        return jsonify(options_json)
+        return jsonify(opts_dict)
         
     except Exception as e:
         db.session.rollback()
