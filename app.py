@@ -462,10 +462,13 @@ def begin_registration():
         db.session.commit()
         
         # Use the library helper to produce a fully JSON-serializable dict
+        # 1) Dump out the raw JSON string the helper produced
         raw_json = options_to_json(options)
-        print("[DEBUG] options_to_json string:", raw_json)
+        print("[DEBUG] options_to_json raw output (first 200 chars):", repr(raw_json)[:200])
+        
+        # 2) Load into a dict and print each top-level value's type
         opts_json = json.loads(raw_json)
-        print("[DEBUG] opts_json types:", {k: type(v) for k, v in opts_json.items()})
+        print("[DEBUG] opts_json types:", {k: type(v).__name__ for k,v in opts_json.items()})
         
         # Inject your DB challenge ID so your front end can pass it back
         opts_json["challenge_id"] = challenge.id
@@ -602,10 +605,13 @@ def begin_authentication():
         db.session.commit()
         
         # Use the library helper to produce a fully JSON-serializable dict
+        # 1) Dump out the raw JSON string the helper produced
         raw_json = options_to_json(options)
-        print("[DEBUG] options_to_json string:", raw_json)
+        print("[DEBUG] options_to_json raw output (first 200 chars):", repr(raw_json)[:200])
+        
+        # 2) Load into a dict and print each top-level value's type
         opts_json = json.loads(raw_json)
-        print("[DEBUG] opts_json types:", {k: type(v) for k, v in opts_json.items()})
+        print("[DEBUG] opts_json types:", {k: type(v).__name__ for k,v in opts_json.items()})
         
         # Inject your DB challenge ID so your front end can pass it back
         opts_json["challenge_id"] = challenge.id
