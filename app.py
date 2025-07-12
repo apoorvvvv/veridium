@@ -389,6 +389,7 @@ def begin_registration():
                 COSEAlgorithmIdentifier.ECDSA_SHA_256,
                 COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256,
             ],
+            attestation="none",  # Fix: Set 'none' attestation to bypass attestationObject requirement
             authenticator_selection=AuthenticatorSelectionCriteria(
                 user_verification=UserVerificationRequirement.REQUIRED
             ),
