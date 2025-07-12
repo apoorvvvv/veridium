@@ -415,7 +415,7 @@ def begin_registration():
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/verify_registration', methods=['POST'])
-@require_rate_limit(limit=10, window=300)
+@require_rate_limit(limit=10, window=300)  # 10 verifications per 5 minutes
 @require_webauthn_security()
 def verify_registration():
     try:
@@ -435,7 +435,7 @@ def verify_registration():
             app.logger.error(f"User not found for challenge {challenge_id}")
             return jsonify({'verified': False, 'error': 'User not found'})
         
-        # Fix base64 padding and decode
+        # Fix base64 padding
         def add_padding(b64_str):
             return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
         
@@ -449,20 +449,16 @@ def verify_registration():
         if 'id' in credential:
             credential['id'] = add_padding(credential['id'])
         
-        # Verify with require_user_verification=True to force biometrics
-        try:
-            verification = verify_registration_response(
-                credential=credential,
-                expected_challenge=challenge.challenge,
-                expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
-                expected_rp_id=Config.get_webauthn_rp_id(),
-                require_user_verification=True,  # Force biometric verification
-                supported_attestation_formats=['packed', 'tpm', 'android-key', 'android-safetynet', 'fido-u2f', 'apple', 'none']
-            )
-            
-            app.logger.info(f"Registration verification success for user {user.user_id}")
-            
-            # Store the credential
+        # Verify
+        verification = verify_registration_response(
+            credential=credential,
+            expected_challenge=challenge.challenge,
+            expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
+            expected_rp_id=Config.get_webauthn_rp_id(),
+            require_user_verification=True
+        )
+        
+        if verification.verified:
             cred = Credential(
                 user_id=user.id,
                 credential_id=verification.credential_id,
@@ -472,23 +468,22 @@ def verify_registration():
             )
             db.session.add(cred)
             
-            # Mark challenge as used
             challenge.used = True
             db.session.commit()
             
+            app.logger.info(f"Registration success for user {user.user_id}")
             return jsonify({
                 'verified': True,
                 'user_id': user.user_id,
                 'credential_id': base64.urlsafe_b64encode(verification.credential_id).decode('utf-8')
             })
-            
-        except Exception as verify_error:
-            app.logger.error(f"WebAuthn verification failed for user {user.user_id}: {str(verify_error)}")
-            return jsonify({'verified': False, 'error': f'Verification failed: {str(verify_error)}'})
+        else:
+            app.logger.error(f"Verification failed for {user.user_id}: NOT_FOUND")
+            return jsonify({'verified': False, 'error': 'Verification failed - NOT_FOUND'})
             
     except Exception as e:
-        app.logger.error(f"Registration error: {str(e)}")
         db.session.rollback()
+        app.logger.error(f"Registration error: {str(e)}")
         return jsonify({'verified': False, 'error': str(e)})
 
 @app.route('/api/begin_authentication', methods=['POST'])
@@ -545,12 +540,13 @@ def begin_authentication():
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/verify_authentication', methods=['POST'])
-@require_rate_limit(limit=10, window=300)  # 10 authentications per 5 minutes
+@require_rate_limit(limit=20, window=300)  # 20 verifications per 5 minutes
 @require_webauthn_security()
 def verify_authentication():
     try:
         data = request.get_json()
         credential = data.get('credential')
+        user_id = data.get('user_id')
         challenge_id = data.get('challenge_id')
         
         # Get and validate challenge
@@ -559,26 +555,21 @@ def verify_authentication():
             app.logger.error(f"Invalid challenge ID {challenge_id}")
             return jsonify({'verified': False, 'error': 'Invalid or expired challenge'})
         
-        # Get user
-        user = User.query.filter_by(id=challenge.user_id).first()
+        # Get user and credential
+        user = User.query.filter_by(user_id=user_id).first()
         if not user:
             app.logger.error(f"User not found for challenge {challenge_id}")
             return jsonify({'verified': False, 'error': 'User not found'})
         
-        # Get credential from database
-        credential_id = base64.urlsafe_b64decode(credential.get('id', ''))
-        db_credential = Credential.query.filter_by(
-            user_id=user.id,
-            credential_id=credential_id
-        ).first()
+        # Fix base64 padding
+        def add_padding(b64_str):
+            return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
         
+        credential_id = base64.urlsafe_b64decode(add_padding(credential.get('id', '')))
+        db_credential = Credential.query.filter_by(credential_id=credential_id).first()
         if not db_credential:
             app.logger.error(f"Credential not found for user {user.user_id}")
             return jsonify({'verified': False, 'error': 'Credential not found'})
-        
-        # Fix base64 padding and decode
-        def add_padding(b64_str):
-            return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
         
         response = credential.get('response', {})
         if 'clientDataJSON' in response:
@@ -590,47 +581,38 @@ def verify_authentication():
         if 'signature' in response:
             signature = add_padding(response['signature'])
             response['signature'] = base64.urlsafe_b64decode(signature)
-        if 'id' in credential:
-            credential['id'] = add_padding(credential['id'])
         
-        # Verify authentication with require_user_verification=True
-        try:
-            verification = verify_authentication_response(
-                credential=credential,
-                expected_challenge=challenge.challenge,
-                expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
-                expected_rp_id=Config.get_webauthn_rp_id(),
-                credential_public_key=db_credential.public_key,
-                credential_current_sign_count=db_credential.sign_count,
-                require_user_verification=True  # Force biometric verification
-            )
-            
-            app.logger.info(f"Authentication verification success for user {user.user_id}")
-            
-            # Update credential sign count and last used
+        # Verify
+        verification = verify_authentication_response(
+            credential=credential,
+            expected_challenge=challenge.challenge,
+            expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
+            expected_rp_id=Config.get_webauthn_rp_id(),
+            credential_public_key=db_credential.public_key,
+            credential_current_sign_count=db_credential.sign_count,
+            require_user_verification=True
+        )
+        
+        if verification.verified:
             db_credential.sign_count = verification.new_sign_count
             db_credential.last_used = datetime.utcnow()
-            
-            # Update user last login
             user.last_login = datetime.utcnow()
-            
-            # Mark challenge as used
             challenge.used = True
             db.session.commit()
             
+            app.logger.info(f"Authentication success for user {user.user_id}")
             return jsonify({
                 'verified': True,
                 'user_id': user.user_id,
                 'last_login': user.last_login.isoformat()
             })
-            
-        except Exception as verify_error:
-            app.logger.error(f"WebAuthn authentication failed for user {user.user_id}: {str(verify_error)}")
-            return jsonify({'verified': False, 'error': f'Authentication failed: {str(verify_error)}'})
+        else:
+            app.logger.error(f"Authentication failed for {user.user_id}: NOT_FOUND")
+            return jsonify({'verified': False, 'error': 'Authentication failed - NOT_FOUND'})
             
     except Exception as e:
-        app.logger.error(f"Authentication error: {str(e)}")
         db.session.rollback()
+        app.logger.error(f"Authentication error: {str(e)}")
         return jsonify({'verified': False, 'error': str(e)})
 
 @app.route('/api/generate_qr', methods=['POST'])
