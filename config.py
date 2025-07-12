@@ -2,6 +2,33 @@ import os
 from datetime import timedelta
 
 class Config:
+    def __init__(self):
+        # Get host and port from environment
+        self.HOST = os.environ.get('HOST', 'localhost')
+        self.PORT = os.environ.get('PORT', '5001')
+        
+        # Calculate CORS origins
+        origins = os.environ.get('CORS_ORIGINS', '').split(',')
+        if origins == ['']:  # If CORS_ORIGINS is empty or just whitespace
+            origins = []
+        
+        # Always include the current server origin
+        current_origin = self.WEBAUTHN_RP_ORIGIN
+        if current_origin not in origins:
+            origins.append(current_origin)
+        
+        # For development, also include localhost variants
+        if self.HOST != 'localhost':
+            localhost_origins = [
+                f"http://localhost:{self.PORT}",
+                f"https://localhost:{self.PORT}"
+            ]
+            for origin in localhost_origins:
+                if origin not in origins:
+                    origins.append(origin)
+        
+        self.CORS_ORIGINS = origins
+    
     # Flask configuration
     SECRET_KEY = os.environ.get('SECRET_KEY') or 'dev-secret-key-change-in-production'
     
@@ -12,7 +39,8 @@ class Config:
     # WebAuthn configuration - dynamically loaded from environment
     @property
     def WEBAUTHN_RP_ID(self):
-        return os.environ.get('WEBAUTHN_RP_ID') or 'localhost'
+        # Use HOST environment variable if set, otherwise fallback to localhost
+        return self.HOST
     
     @property
     def WEBAUTHN_RP_NAME(self):
@@ -20,7 +48,9 @@ class Config:
     
     @property  
     def WEBAUTHN_RP_ORIGIN(self):
-        return os.environ.get('WEBAUTHN_RP_ORIGIN') or 'http://localhost:5001'
+        # Build origin from HOST and PORT environment variables
+        protocol = 'https' if os.environ.get('FORCE_HTTPS', 'false').lower() == 'true' else 'http'
+        return f"{protocol}://{self.HOST}:{self.PORT}"
     
     # Cross-device session configuration
     SESSION_TIMEOUT = timedelta(minutes=5)  # QR code session timeout
@@ -31,9 +61,6 @@ class Config:
     # Rate limiting (for future monetization)
     RATE_LIMIT_ENABLED = True
     RATE_LIMIT_DEFAULT = "100 per hour"
-    
-    # CORS settings
-    CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*').split(',')
     
     # SocketIO configuration
     SOCKETIO_ASYNC_MODE = os.environ.get('SOCKETIO_ASYNC_MODE', 'eventlet')
