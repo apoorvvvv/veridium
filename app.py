@@ -9,7 +9,7 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
     PublicKeyCredentialDescriptor,
     AuthenticatorTransport,
-    AttestationConveyancePreference  # Add this import
+    AttestationConveyancePreference  # Add for "none"
 )
 from webauthn.helpers.cose import COSEAlgorithmIdentifier
 import json
@@ -32,11 +32,7 @@ config_instance = Config()
 # Initialize extensions
 db.init_app(app)
 CORS(app, origins=app.config['CORS_ORIGINS'])
-socketio = SocketIO(
-    app, 
-    cors_allowed_origins=app.config['CORS_ORIGINS'],
-    async_mode=app.config['SOCKETIO_ASYNC_MODE']
-)
+socketio = SocketIO(app, cors_allowed_origins=app.config['CORS_ORIGINS'])
 
 # Initialize security
 init_security(app)
@@ -394,7 +390,7 @@ def begin_registration():
                 COSEAlgorithmIdentifier.ECDSA_SHA_256,
                 COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256,
             ],
-            attestation="none",  # Fix: Skip attestationObject requirement
+            attestation=AttestationConveyancePreference.NONE,  # Fix: Skip attestationObject requirement
             authenticator_selection=AuthenticatorSelectionCriteria(
                 user_verification=UserVerificationRequirement.REQUIRED
             ),
@@ -446,12 +442,8 @@ def verify_registration():
             return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
         
         response = credential.get('response', {})
-        
-        # Log the credential structure for debugging
         app.logger.info(f"Credential keys: {list(credential.keys())}")
         app.logger.info(f"Response keys: {list(response.keys())}")
-        app.logger.error(f"Credential response keys: {credential.get('response', {}).keys()}")
-        app.logger.info(f"Full credential structure: {json.dumps(credential, default=str)}")
         
         if 'clientDataJSON' in response:
             client_data = add_padding(response['clientDataJSON'])
@@ -460,25 +452,19 @@ def verify_registration():
             att_obj = add_padding(response['attestationObject'])
             response['attestationObject'] = base64.urlsafe_b64decode(att_obj)
         else:
-            app.logger.warning("attestationObject not found in response - this is expected with attestation='none'")
-            # Add fallback for devices that force direct attestation
+            app.logger.warning("attestationObject not found - expected with attestation='none'")
             response['attestationObject'] = b''  # Empty bytes as fallback
         if 'id' in credential:
             credential['id'] = add_padding(credential['id'])
         
         # Verify
-        try:
-            verification = verify_registration_response(
-                credential=credential,
-                expected_challenge=challenge.challenge,
-                expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
-                expected_rp_id=Config.get_webauthn_rp_id(),
-                require_user_verification=True
-            )
-        except Exception as verify_error:
-            app.logger.error(f"Verification error details: {str(verify_error)}")
-            app.logger.error(f"Verification error type: {type(verify_error)}")
-            raise verify_error
+        verification = verify_registration_response(
+            credential=credential,
+            expected_challenge=challenge.challenge,
+            expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
+            expected_rp_id=Config.get_webauthn_rp_id(),
+            require_user_verification=True
+        )
         
         if verification.verified:
             cred = Credential(
@@ -583,15 +569,15 @@ def verify_authentication():
             app.logger.error(f"User not found for challenge {challenge_id}")
             return jsonify({'verified': False, 'error': 'User not found'})
         
-        # Fix base64 padding
-        def add_padding(b64_str):
-            return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
-        
-        credential_id = base64.urlsafe_b64decode(add_padding(credential.get('id', '')))
+        credential_id = base64.urlsafe_b64decode(credential.get('id', ''))
         db_credential = Credential.query.filter_by(credential_id=credential_id).first()
         if not db_credential:
             app.logger.error(f"Credential not found for user {user.user_id}")
             return jsonify({'verified': False, 'error': 'Credential not found'})
+        
+        # Fix base64 padding
+        def add_padding(b64_str):
+            return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
         
         response = credential.get('response', {})
         if 'clientDataJSON' in response:
