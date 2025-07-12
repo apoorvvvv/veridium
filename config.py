@@ -36,7 +36,7 @@ class Config:
     CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*').split(',')
     
     # SocketIO configuration
-    SOCKETIO_ASYNC_MODE = 'threading'
+    SOCKETIO_ASYNC_MODE = os.environ.get('SOCKETIO_ASYNC_MODE', 'eventlet')
     
     @classmethod
     def get_webauthn_rp_id(cls):

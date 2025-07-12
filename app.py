@@ -31,7 +31,11 @@ config_instance = Config()
 # Initialize extensions
 db.init_app(app)
 CORS(app, origins=app.config['CORS_ORIGINS'])
-socketio = SocketIO(app, cors_allowed_origins=app.config['CORS_ORIGINS'])
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins=app.config['CORS_ORIGINS'],
+    async_mode=app.config['SOCKETIO_ASYNC_MODE']
+)
 
 # Initialize security
 init_security(app)
