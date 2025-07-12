@@ -50,19 +50,33 @@ def setup_environment():
         print(f"🔍 Environment check: RENDER={os.environ.get('RENDER')}, RENDER_EXTERNAL_HOSTNAME={render_hostname}")
         
         # Extra safety: Also set in config
-        import os
         os.environ.setdefault('WEBAUTHN_RP_ID', domain)
         os.environ.setdefault('WEBAUTHN_RP_ORIGIN', base_url)
         
     else:  # Local development
-        if not os.environ.get('WEBAUTHN_RP_ID'):
-            os.environ['WEBAUTHN_RP_ID'] = 'localhost'
-        
-        if not os.environ.get('WEBAUTHN_RP_ORIGIN'):
-            os.environ['WEBAUTHN_RP_ORIGIN'] = 'http://localhost:5001'
-        
-        if not os.environ.get('CORS_ORIGINS'):
-            os.environ['CORS_ORIGINS'] = 'http://localhost:5001,http://127.0.0.1:5001,http://localhost:*,http://127.0.0.1:*'
+        # Check if we're using a network IP instead of localhost
+        if 'localhost' not in host and '127.0.0.1' not in host and '0.0.0.0' not in host:
+            # Using network IP address
+            if not os.environ.get('WEBAUTHN_RP_ID'):
+                os.environ['WEBAUTHN_RP_ID'] = host
+            
+            if not os.environ.get('WEBAUTHN_RP_ORIGIN'):
+                # Use HTTP for local network development
+                os.environ['WEBAUTHN_RP_ORIGIN'] = f'http://{host}:{port}'
+            
+            if not os.environ.get('CORS_ORIGINS'):
+                # Allow both the network IP and localhost
+                os.environ['CORS_ORIGINS'] = f'http://{host}:{port},http://{host}:*,http://localhost:{port},http://127.0.0.1:{port},http://localhost:*,http://127.0.0.1:*'
+        else:
+            # Standard localhost development
+            if not os.environ.get('WEBAUTHN_RP_ID'):
+                os.environ['WEBAUTHN_RP_ID'] = 'localhost'
+            
+            if not os.environ.get('WEBAUTHN_RP_ORIGIN'):
+                os.environ['WEBAUTHN_RP_ORIGIN'] = 'http://localhost:5001'
+            
+            if not os.environ.get('CORS_ORIGINS'):
+                os.environ['CORS_ORIGINS'] = 'http://localhost:5001,http://127.0.0.1:5001,http://localhost:*,http://127.0.0.1:*'
     
     if not os.environ.get('WEBAUTHN_RP_NAME'):
         os.environ['WEBAUTHN_RP_NAME'] = 'Veridium'
@@ -128,12 +142,12 @@ def main():
     
     try:
         # Start the server
+        # Note: socketio.run doesn't support ssl_context parameter
         socketio.run(
             app,
             host=host,
             port=port,
             debug=debug,
-            ssl_context=ssl_context,
             use_reloader=debug,
             log_output=True
         )

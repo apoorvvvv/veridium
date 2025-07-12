@@ -6,7 +6,6 @@ from webauthn import generate_authentication_options, verify_authentication_resp
 from webauthn import options_to_json
 from webauthn.helpers.structs import (
     AuthenticatorSelectionCriteria,
-    UserVerificationRequirement,
     PublicKeyCredentialDescriptor,
     AuthenticatorTransport
 )
@@ -395,7 +394,7 @@ def begin_registration():
             ],
             attestation="none",  # Fix: Set 'none' attestation to bypass attestationObject requirement
             authenticator_selection=AuthenticatorSelectionCriteria(
-                user_verification=UserVerificationRequirement.REQUIRED
+                user_verification="required"
             ),
             timeout=60000
         )
@@ -521,7 +520,7 @@ def begin_authentication():
         options = generate_authentication_options(
             rp_id=Config.get_webauthn_rp_id(),
             allow_credentials=allowed_credentials,
-            user_verification=UserVerificationRequirement.REQUIRED,
+            user_verification="required",
             timeout=60000
         )
         
