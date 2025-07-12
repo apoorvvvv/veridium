@@ -31,8 +31,24 @@ config_instance = Config()
 
 # Initialize extensions
 db.init_app(app)
-CORS(app, origins=app.config['CORS_ORIGINS'])
-socketio = SocketIO(app, cors_allowed_origins=app.config['CORS_ORIGINS'])
+
+# --- CORS and SocketIO Setup ---
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
+# Ensure CORS supports credentials and uses correct origins
+CORS(app, origins=app.config['CORS_ORIGINS'], supports_credentials=True)
+
+# SocketIO: set async_mode and allowed origins from config
+socketio = SocketIO(
+    app,
+    cors_allowed_origins=app.config['CORS_ORIGINS'],
+    async_mode=app.config.get('SOCKETIO_ASYNC_MODE', 'eventlet'),
+)
+
+# Print CORS/SocketIO config for debugging
+print(f"[DEBUG] CORS_ORIGINS: {app.config['CORS_ORIGINS']}")
+print(f"[DEBUG] SOCKETIO_ASYNC_MODE: {app.config.get('SOCKETIO_ASYNC_MODE', 'eventlet')}")
 
 # Initialize security
 init_security(app)
@@ -184,7 +200,12 @@ HTML_TEMPLATE = '''
     <script src="https://unpkg.com/@simplewebauthn/browser@9/dist/bundle/index.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script>
-        const socket = io();
+        // Explicitly set withCredentials and origin for Socket.IO
+        const socket = io({
+            withCredentials: true,
+            // If you want to force the origin, uncomment and set below:
+            // "extraHeaders": { "Origin": window.location.origin }
+        });
         let currentUser = localStorage.getItem('veridium_user_id');
         
         function showStatus(message, type = 'info') {
@@ -199,6 +220,7 @@ HTML_TEMPLATE = '''
                 
                 const optionsResp = await fetch('/api/begin_registration', {
                     method: 'POST',
+                    credentials: 'include', // <-- send/receive cookies
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         username: 'veridium_user_' + Date.now(),
@@ -215,6 +237,7 @@ HTML_TEMPLATE = '''
                 
                 const verifyResp = await fetch('/api/verify_registration', {
                     method: 'POST',
+                    credentials: 'include', // <-- send/receive cookies
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         credential: credential,
@@ -251,6 +274,7 @@ HTML_TEMPLATE = '''
                 
                 const optionsResp = await fetch('/api/begin_authentication', {
                     method: 'POST',
+                    credentials: 'include', // <-- send/receive cookies
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({user_id: currentUser})
                 });
@@ -264,6 +288,7 @@ HTML_TEMPLATE = '''
                 
                 const verifyResp = await fetch('/api/verify_authentication', {
                     method: 'POST',
+                    credentials: 'include', // <-- send/receive cookies
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         credential: assertion,
@@ -292,6 +317,7 @@ HTML_TEMPLATE = '''
             try {
                 const response = await fetch('/api/generate_qr', {
                     method: 'POST',
+                    credentials: 'include', // <-- send/receive cookies
                     headers: {'Content-Type': 'application/json'}
                 });
                 
@@ -322,6 +348,7 @@ HTML_TEMPLATE = '''
             try {
                 const response = await fetch('/api/authenticate_qr', {
                     method: 'POST',
+                    credentials: 'include', // <-- send/receive cookies
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         session_id: sessionId,
@@ -755,4 +782,8 @@ def handle_join_session(data):
     emit('joined', {'session_id': session_id})
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000) 
+    import os
+    host = os.environ.get('HOST', '0.0.0.0')
+    port = int(os.environ.get('PORT', 5001))
+    debug = os.environ.get('FLASK_ENV') == 'development'
+    socketio.run(app, debug=debug, host=host, port=port) 
