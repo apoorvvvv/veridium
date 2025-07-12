@@ -396,6 +396,8 @@ def home():
 @require_rate_limit(limit=10, window=300)  # 10 registrations per 5 minutes
 @require_webauthn_security()
 def begin_registration():
+    print("[BEGIN_REG] incoming cookies:", request.cookies)
+    print("[BEGIN_REG] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
     try:
         data = request.get_json()
         username = data.get('username', 'veridium_user')
@@ -447,6 +449,8 @@ def begin_registration():
 @require_rate_limit(limit=10, window=300)  # 10 verifications per 5 minutes
 @require_webauthn_security()
 def verify_registration():
+    print("[VERIFY_REG] incoming cookies:", request.cookies)
+    print("[VERIFY_REG] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
     try:
         data = request.get_json()
         credential = data.get('credential')
@@ -525,6 +529,8 @@ def verify_registration():
 @require_rate_limit(limit=20, window=300)  # 20 auth attempts per 5 minutes
 @require_webauthn_security()
 def begin_authentication():
+    print("[BEGIN_AUTH] incoming cookies:", request.cookies)
+    print("[BEGIN_AUTH] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
     try:
         data = request.get_json()
         user_id = data.get('user_id')
@@ -578,6 +584,8 @@ def begin_authentication():
 @require_rate_limit(limit=20, window=300)  # 20 verifications per 5 minutes
 @require_webauthn_security()
 def verify_authentication():
+    print("[VERIFY_AUTH] incoming cookies:", request.cookies)
+    print("[VERIFY_AUTH] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
     try:
         data = request.get_json()
         credential = data.get('credential')
