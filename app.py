@@ -5,11 +5,11 @@ from webauthn import generate_registration_options, verify_registration_response
 from webauthn import generate_authentication_options, verify_authentication_response
 from webauthn import options_to_json
 from webauthn.helpers.structs import (
-    AuthenticatorSelectionCriteria,
     PublicKeyCredentialDescriptor,
     AuthenticatorTransport
 )
-from webauthn.helpers.cose import COSEAlgorithmIdentifier
+from webauthn.helpers.structs import AuthenticatorSelectionCriteria
+# COSEAlgorithmIdentifier not needed - using numeric values directly
 import json
 import base64
 import qrcode
@@ -389,13 +389,9 @@ def begin_registration():
             user_name=user.user_name,
             user_display_name=user.display_name,
             supported_pub_key_algs=[
-                COSEAlgorithmIdentifier.ECDSA_SHA_256,
-                COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256,
+                -7,  # ES256
+                -257,  # RS256
             ],
-            attestation="none",  # Fix: Set 'none' attestation to bypass attestationObject requirement
-            authenticator_selection=AuthenticatorSelectionCriteria(
-                user_verification="required"
-            ),
             timeout=60000
         )
         
@@ -520,7 +516,7 @@ def begin_authentication():
         options = generate_authentication_options(
             rp_id=Config.get_webauthn_rp_id(),
             allow_credentials=allowed_credentials,
-            user_verification="required",
+            user_verification="required",  # This parameter name is correct for authentication
             timeout=60000
         )
         
