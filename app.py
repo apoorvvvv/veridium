@@ -470,6 +470,12 @@ def begin_registration():
         opts_json = json.loads(raw_json)
         print("[DEBUG] opts_json types:", {k: type(v).__name__ for k,v in opts_json.items()})
         
+        # Also write to file for debugging
+        from datetime import datetime
+        with open('/tmp/webauthn_debug.log', 'a') as f:
+            f.write(f"[{datetime.now()}] options_to_json raw (truncated): {repr(raw_json)[:200]}\n")
+            f.write(f"[{datetime.now()}] opts_json value types: {dict((k, type(v).__name__) for k,v in opts_json.items())}\n")
+        
         # Inject your DB challenge ID so your front end can pass it back
         opts_json["challenge_id"] = challenge.id
         
@@ -522,10 +528,13 @@ def verify_registration():
         if 'id' in credential:
             credential['id'] = add_padding(credential['id'])
         
+        # Fix: Convert challenge bytes to base64url str (lib expects str)
+        expected_challenge_str = base64.urlsafe_b64encode(challenge.challenge).decode('utf-8')
+        
         # Verify
         verification = verify_registration_response(
             credential=credential,
-            expected_challenge=challenge.challenge,
+            expected_challenge=expected_challenge_str,
             expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
             expected_rp_id=Config.get_webauthn_rp_id(),
             require_user_verification=True
@@ -667,10 +676,13 @@ def verify_authentication():
             signature = add_padding(response['signature'])
             response['signature'] = base64.urlsafe_b64decode(signature)
         
+        # Fix: Convert challenge bytes to base64url str (lib expects str)
+        expected_challenge_str = base64.urlsafe_b64encode(challenge.challenge).decode('utf-8')
+        
         # Verify
         verification = verify_authentication_response(
             credential=credential,
-            expected_challenge=challenge.challenge,
+            expected_challenge=expected_challenge_str,
             expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
             expected_rp_id=Config.get_webauthn_rp_id(),
             credential_public_key=db_credential.public_key,
