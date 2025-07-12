@@ -382,7 +382,7 @@ def begin_registration():
         db.session.add(user)
         db.session.flush()  # Get the user ID
         
-        # Generate registration options
+        # Generate registration options with attestation="none"
         options = generate_registration_options(
             rp_id=Config.get_webauthn_rp_id(),
             rp_name=config_instance.WEBAUTHN_RP_NAME,
@@ -390,10 +390,13 @@ def begin_registration():
             user_name=user.user_name,
             user_display_name=user.display_name,
             supported_pub_key_algs=[
-                -7,  # ES256
-                -257,  # RS256
+                COSEAlgorithmIdentifier.ECDSA_SHA_256,
+                COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256,
             ],
-            attestation=AttestationConveyancePreference.NONE,  # Set 'none' attestation to bypass attestationObject requirement
+            attestation="none",  # Fix: Skip attestationObject requirement
+            authenticator_selection=AuthenticatorSelectionCriteria(
+                user_verification=UserVerificationRequirement.REQUIRED
+            ),
             timeout=60000
         )
         
@@ -446,6 +449,7 @@ def verify_registration():
         # Log the credential structure for debugging
         app.logger.info(f"Credential keys: {list(credential.keys())}")
         app.logger.info(f"Response keys: {list(response.keys())}")
+        app.logger.error(f"Credential response keys: {credential.get('response', {}).keys()}")
         app.logger.info(f"Full credential structure: {json.dumps(credential, default=str)}")
         
         if 'clientDataJSON' in response:
