@@ -528,8 +528,8 @@ def verify_registration():
         if 'id' in credential:
             credential['id'] = add_padding(credential['id'])
         
-        # Fix: Convert challenge bytes to base64url str (lib expects str)
-        expected_challenge_str = base64.urlsafe_b64encode(challenge.challenge).decode('utf-8')
+        # Fix: Convert challenge bytes to base64url str (library expects str)
+        expected_challenge_str = base64.urlsafe_b64encode(challenge.challenge).decode('utf-8').rstrip('=')
         
         # Verify
         verification = verify_registration_response(
