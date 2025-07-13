@@ -39,8 +39,8 @@ class Config:
     # WebAuthn configuration - dynamically loaded from environment
     @property
     def WEBAUTHN_RP_ID(self):
-        # Use HOST environment variable if set, otherwise fallback to localhost
-        return self.HOST
+        # Use environment variable if set, otherwise fallback to HOST
+        return os.environ.get('WEBAUTHN_RP_ID') or self.HOST
     
     @property
     def WEBAUTHN_RP_NAME(self):
@@ -48,9 +48,10 @@ class Config:
     
     @property  
     def WEBAUTHN_RP_ORIGIN(self):
-        # Build origin from HOST and PORT environment variables
-        protocol = 'https' if os.environ.get('FORCE_HTTPS', 'false').lower() == 'true' else 'http'
-        return f"{protocol}://{self.HOST}:{self.PORT}"
+        # Use environment variable if set, otherwise build from HOST and PORT
+        return os.environ.get('WEBAUTHN_RP_ORIGIN') or (
+            ('https' if os.environ.get('FORCE_HTTPS', 'false').lower() == 'true' else 'http') + f'://{self.HOST}:{self.PORT}'
+        )
     
     # Cross-device session configuration
     SESSION_TIMEOUT = timedelta(minutes=5)  # QR code session timeout
