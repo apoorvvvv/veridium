@@ -426,12 +426,9 @@ def urlsafe_b64encode_no_padding(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
 
 @app.route('/api/begin_registration', methods=['POST'])
-# @require_rate_limit(limit=10, window=300)  # 10 registrations per 5 minutes
-# @require_webauthn_security()
+@require_rate_limit(limit=10, window=300)  # 10 registrations per 5 minutes
+@require_webauthn_security()
 def begin_registration():
-    print("🔍 REGISTRATION FUNCTION CALLED - DEBUGGING")
-    print("[BEGIN_REG] incoming cookies:", request.cookies)
-    print("[BEGIN_REG] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
     try:
         data = request.get_json()
         username = data.get('username', 'veridium_user')
@@ -441,19 +438,12 @@ def begin_registration():
         user = User.create_user(username, display_name)
         db.session.add(user)
         db.session.flush()  # Get the user ID
-
-        # Print all arguments to generate_registration_options
-        print("user_id:", repr(user.user_id), type(user.user_id))
-        print("user_name:", repr(user.user_name), type(user.user_name))
-        print("user_display_name:", repr(user.display_name), type(user.display_name))
-        print("rp_id:", repr(Config.get_webauthn_rp_id()), type(Config.get_webauthn_rp_id()))
-        print("rp_name:", repr(config_instance.WEBAUTHN_RP_NAME), type(config_instance.WEBAUTHN_RP_NAME))
-
+        
         # Generate registration options with attestation="none"
         options = generate_registration_options(
             rp_id=Config.get_webauthn_rp_id(),
             rp_name=config_instance.WEBAUTHN_RP_NAME,
-            user_id=user.user_id,  # Pass as string, library will encode
+            user_id=user.user_id,  # Fixed: Pass as str, library handles encoding
             user_name=user.user_name,
             user_display_name=user.display_name,
             supported_pub_key_algs=[
@@ -476,29 +466,14 @@ def begin_registration():
         db.session.add(challenge)
         db.session.commit()
         
-        # Use the library helper to produce a fully JSON-serializable dict
-        # 1) Dump out the raw JSON string the helper produced
-        raw_json = options_to_json(options)
-        print("[DEBUG] options_to_json raw output (first 200 chars):", repr(raw_json)[:200])
+        # Convert to JSON-serializable format using webauthn helper
+        options_json = json.loads(options_to_json(options))
+        options_json['challenge_id'] = challenge.id
         
-        # 2) Load into a dict and print each top-level value's type
-        opts_json = json.loads(raw_json)
-        print("[DEBUG] opts_json types:", {k: type(v).__name__ for k,v in opts_json.items()})
-        
-        # Also write to file for debugging
-        from datetime import datetime
-        with open('/tmp/webauthn_debug.log', 'a') as f:
-            f.write(f"[{datetime.now()}] options_to_json raw (truncated): {repr(raw_json)[:200]}\n")
-            f.write(f"[{datetime.now()}] opts_json value types: {dict((k, type(v).__name__) for k,v in opts_json.items())}\n")
-        
-        # Inject your DB challenge ID so your front end can pass it back
-        opts_json["challenge_id"] = challenge.id
-        
-        return jsonify(opts_json)
+        return jsonify(options_json)
         
     except Exception as e:
         db.session.rollback()
-        app.logger.error(f"Registration error: {str(e)}")
         return jsonify({'error': str(e)}), 400
 
 @app.route('/api/verify_registration', methods=['POST'])
