@@ -540,7 +540,7 @@ def verify_registration():
             app.logger.warning("attestationObject missing - using empty bytes fallback for 'none'")
             response['attestationObject'] = b''  # Empty bytes fallback
         
-        # Fix: Add 'rawId' if missing (decode 'id' to bytes)
+        # Fix: Add 'rawId' if missing (decode from 'id')
         if 'rawId' not in credential:
             if 'id' in credential:
                 credential['rawId'] = base64.urlsafe_b64decode(add_padding(credential['id']))
