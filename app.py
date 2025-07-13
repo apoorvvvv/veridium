@@ -515,13 +515,20 @@ def verify_registration():
             app.logger.warning("attestationObject missing - using empty bytes fallback for 'none'")
             response['attestationObject'] = b''  # Empty bytes fallback
         
-        # Fix: Add 'rawId' if missing (decode from 'id')
-        if 'rawId' not in credential:
-            if 'id' in credential:
-                credential['rawId'] = base64.urlsafe_b64decode(add_padding(credential['id']))
-                app.logger.info("Added rawId fallback from id")
-            else:
-                raise ValueError("Credential missing both 'rawId' and 'id'")
+        # Fix: Add 'raw_id' attribute (decode from 'id' if needed)
+        from types import SimpleNamespace
+        if 'rawId' in credential:
+            raw_id = credential['rawId']
+        elif 'id' in credential:
+            raw_id = base64.urlsafe_b64decode(add_padding(credential['id']))
+        else:
+            raise ValueError("Credential missing both 'rawId' and 'id'")
+        credential_obj = SimpleNamespace(
+            id=credential.get('id'),
+            raw_id=raw_id,
+            response=credential.get('response', {}),
+            type=credential.get('type', 'public-key')
+        )
         
         # Convert challenge to base64 str if bytes
         expected_challenge = challenge.challenge
@@ -530,7 +537,7 @@ def verify_registration():
         
         # Verify
         verification = verify_registration_response(
-            credential=credential,
+            credential=credential_obj,
             expected_challenge=expected_challenge,
             expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
             expected_rp_id=Config.get_webauthn_rp_id(),
