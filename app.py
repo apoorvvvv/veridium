@@ -503,9 +503,8 @@ def begin_registration():
 
 @app.route('/api/verify_registration', methods=['POST'])
 @require_rate_limit(limit=10, window=300)  # 10 verifications per 5 minutes
+@require_webauthn_security()
 def verify_registration():
-    print("[VERIFY_REG] incoming cookies:", request.cookies)
-    print("[VERIFY_REG] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
     try:
         data = request.get_json()
         credential = data.get('credential')
@@ -539,17 +538,25 @@ def verify_registration():
             response['attestationObject'] = base64.urlsafe_b64decode(att_obj)
         else:
             app.logger.warning("attestationObject missing - using empty bytes fallback for 'none'")
-            response['attestationObject'] = b''  # Fix: Empty bytes fallback for missing field
-        if 'id' in credential:
-            credential['id'] = add_padding(credential['id'])
+            response['attestationObject'] = b''  # Empty bytes fallback
         
-        # Fix: Convert challenge bytes to base64url str (library expects str)
-        expected_challenge_str = base64.urlsafe_b64encode(challenge.challenge).decode('utf-8').rstrip('=')
+        # Fix: Add 'rawId' if missing (decode 'id' to bytes)
+        if 'rawId' not in credential:
+            if 'id' in credential:
+                credential['rawId'] = base64.urlsafe_b64decode(add_padding(credential['id']))
+                app.logger.info("Added rawId fallback from id")
+            else:
+                raise ValueError("Credential missing both 'rawId' and 'id'")
+        
+        # Convert challenge to base64 str if bytes
+        expected_challenge = challenge.challenge
+        if isinstance(expected_challenge, bytes):
+            expected_challenge = base64.urlsafe_b64encode(expected_challenge).decode('utf-8').rstrip('=')
         
         # Verify
         verification = verify_registration_response(
             credential=credential,
-            expected_challenge=expected_challenge_str,
+            expected_challenge=expected_challenge,
             expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
             expected_rp_id=Config.get_webauthn_rp_id(),
             require_user_verification=True
