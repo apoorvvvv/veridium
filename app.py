@@ -19,6 +19,8 @@ import io
 from datetime import datetime
 import secrets
 
+print("*** RUNNING UPDATED APP.PY WITH STRING USER_ID FIX ***")
+
 from config import Config
 from models import db, User, Credential, Challenge, CrossDeviceSession
 from security import init_security, require_rate_limit, require_webauthn_security
@@ -415,13 +417,19 @@ HTML_TEMPLATE = '''
 def home():
     return render_template_string(HTML_TEMPLATE)
 
+@app.route('/test')
+def test():
+    return jsonify({'status': 'ok', 'message': 'Test endpoint working'})
+
 def urlsafe_b64encode_no_padding(b: bytes) -> str:
     """Convert bytes to base64-url-safe string without padding"""
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
 
 @app.route('/api/begin_registration', methods=['POST'])
-@require_rate_limit(limit=10, window=300)  # 10 registrations per 5 minutes
+# @require_rate_limit(limit=10, window=300)  # 10 registrations per 5 minutes
+# @require_webauthn_security()
 def begin_registration():
+    print("🔍 REGISTRATION FUNCTION CALLED - DEBUGGING")
     print("[BEGIN_REG] incoming cookies:", request.cookies)
     print("[BEGIN_REG] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
     try:
@@ -433,12 +441,19 @@ def begin_registration():
         user = User.create_user(username, display_name)
         db.session.add(user)
         db.session.flush()  # Get the user ID
-        
+
+        # Print all arguments to generate_registration_options
+        print("user_id:", repr(user.user_id), type(user.user_id))
+        print("user_name:", repr(user.user_name), type(user.user_name))
+        print("user_display_name:", repr(user.display_name), type(user.display_name))
+        print("rp_id:", repr(Config.get_webauthn_rp_id()), type(Config.get_webauthn_rp_id()))
+        print("rp_name:", repr(config_instance.WEBAUTHN_RP_NAME), type(config_instance.WEBAUTHN_RP_NAME))
+
         # Generate registration options with attestation="none"
         options = generate_registration_options(
             rp_id=Config.get_webauthn_rp_id(),
             rp_name=config_instance.WEBAUTHN_RP_NAME,
-            user_id=user.user_id.encode('utf-8'),
+            user_id=user.user_id,  # Pass as string, library will encode
             user_name=user.user_name,
             user_display_name=user.display_name,
             supported_pub_key_algs=[
