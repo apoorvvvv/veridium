@@ -502,19 +502,19 @@ def verify_registration():
         def add_padding(b64_str):
             return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
         
-        response_dict = credential.get('response', {})
+        response = credential.get('response', {})
         app.logger.info(f"Credential keys: {list(credential.keys())}")
-        app.logger.info(f"Response keys: {list(response_dict.keys())}")
+        app.logger.info(f"Response keys: {list(response.keys())}")
         
-        if 'clientDataJSON' in response_dict:
-            client_data = add_padding(response_dict['clientDataJSON'])
-            response_dict['clientDataJSON'] = base64.urlsafe_b64decode(client_data).decode('utf-8')
-        if 'attestationObject' in response_dict:
-            att_obj = add_padding(response_dict['attestationObject'])
-            response_dict['attestationObject'] = base64.urlsafe_b64decode(att_obj)
+        if 'clientDataJSON' in response:
+            client_data = add_padding(response['clientDataJSON'])
+            response['clientDataJSON'] = base64.urlsafe_b64decode(client_data).decode('utf-8')
+        if 'attestationObject' in response:
+            att_obj = add_padding(response['attestationObject'])
+            response['attestationObject'] = base64.urlsafe_b64decode(att_obj)
         else:
             app.logger.warning("attestationObject missing - using empty bytes fallback for 'none'")
-            response_dict['attestationObject'] = b''  # Empty bytes fallback
+            response['attestationObject'] = b''  # Empty bytes fallback
         
         # Fix: Add 'rawId' if missing (decode from 'id')
         if 'rawId' not in credential:
@@ -523,23 +523,6 @@ def verify_registration():
                 app.logger.info("Added rawId fallback from id")
             else:
                 raise ValueError("Credential missing both 'rawId' and 'id'")
-        
-        # Convert response dict to namedtuple with snake_case for py_webauthn
-        WebAuthnResponse = namedtuple('WebAuthnResponse', [
-            'client_data_json', 'attestation_object', 'authenticator_data',
-            'signature', 'user_handle', 'transports'
-        ])
-        response_struct = WebAuthnResponse(
-            client_data_json=response_dict.get('clientDataJSON'),
-            attestation_object=response_dict.get('attestationObject'),
-            authenticator_data=response_dict.get('authenticatorData'),
-            signature=response_dict.get('signature'),
-            user_handle=response_dict.get('userHandle'),
-            transports=response_dict.get('transports', [])
-        )
-        credential['response'] = response_struct  # Replace dict with struct
-        app.logger.info(f"Converted response to snake_case struct: {response_struct}")
-        app.logger.info(f"Response type after conversion: {type(response_struct)}")
         
         # Convert challenge to base64 str if bytes
         expected_challenge = challenge.challenge
