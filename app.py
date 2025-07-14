@@ -721,27 +721,28 @@ def begin_authentication():
                 app.logger.warning(f"Unexpected transports type {type(transports)} for cred_id {cred.credential_id.hex()[:8]}")
                 transports = []  # Extra safety for other types
             
+            # Define a mapping for all supported transport types
+            TRANSPORT_MAP = {
+                "usb": AuthenticatorTransport.USB,
+                "nfc": AuthenticatorTransport.NFC,
+                "ble": AuthenticatorTransport.BLE,
+                "internal": AuthenticatorTransport.INTERNAL,
+                "cable": AuthenticatorTransport.CABLE,
+                "hybrid": AuthenticatorTransport.HYBRID,
+            }
+            
             # Convert string transports to AuthenticatorTransport enum values
             transport_enums = []
             if transports:
                 for transport_str in transports:
-                    try:
-                        if transport_str == "usb":
-                            transport_enums.append(AuthenticatorTransport.USB)
-                        elif transport_str == "nfc":
-                            transport_enums.append(AuthenticatorTransport.NFC)
-                        elif transport_str == "ble":
-                            transport_enums.append(AuthenticatorTransport.BLE)
-                        elif transport_str == "internal":
-                            transport_enums.append(AuthenticatorTransport.INTERNAL)
-                        elif transport_str == "cable":
-                            transport_enums.append(AuthenticatorTransport.CABLE)
-                        elif transport_str == "hybrid":
-                            transport_enums.append(AuthenticatorTransport.HYBRID)
+                    if isinstance(transport_str, str):
+                        transport_enum = TRANSPORT_MAP.get(transport_str.lower())  # Case-insensitive for safety
+                        if transport_enum:
+                            transport_enums.append(transport_enum)
                         else:
-                            app.logger.warning(f"Unknown transport type: {transport_str}")
-                    except Exception as e:
-                        app.logger.error(f"Error converting transport {transport_str}: {e}")
+                            app.logger.warning(f"Unknown transport type '{transport_str}' for cred_id {cred.credential_id.hex()[:8]} - skipping")
+                    else:
+                        app.logger.warning(f"Invalid transport item type {type(transport_str)} for cred_id {cred.credential_id.hex()[:8]} - skipping")
             
             app.logger.info(f"Converted transports for cred_id {cred.credential_id.hex()[:8]}: {[t.value for t in transport_enums] if transport_enums else 'None'}")
             
@@ -774,6 +775,12 @@ def begin_authentication():
         options_json['challenge_id'] = challenge_id  # Add for frontend to send back
         
         app.logger.info(f"Generated auth options for user {username} with {len(allowed_credentials)} credentials")
+        
+        # Log the final allowed_credentials for debugging (as suggested by Grok)
+        for i, cred_desc in enumerate(allowed_credentials):
+            transport_values = [t.value for t in cred_desc.transports] if cred_desc.transports else None
+            app.logger.info(f"Credential {i}: id={cred_desc.id.hex()[:8]}..., transports={transport_values}")
+        
         return jsonify(options_json), 200
     
     except Exception as e:
