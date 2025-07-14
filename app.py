@@ -539,6 +539,7 @@ def verify_registration():
         )
         credential['response'] = response  # Replace dict with struct
         app.logger.info(f"Converted response to snake_case struct: {response}")
+        app.logger.info(f"Response type after conversion: {type(response)}")
         
         # Convert challenge to base64 str if bytes
         expected_challenge = challenge.challenge
