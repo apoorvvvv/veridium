@@ -8,6 +8,7 @@ from webauthn.helpers.structs import (
     AuthenticatorSelectionCriteria,
     UserVerificationRequirement,
     PublicKeyCredentialDescriptor,
+    PublicKeyCredentialType,  # Add this import
     AuthenticatorTransport,
     AttestationConveyancePreference,  # Add for "none"
     AuthenticationCredential
@@ -867,6 +868,9 @@ def begin_authentication():
                     app.logger.info(f"transport_enums raw: {transport_enums}")
                     app.logger.info(f"transport_enums types: {[type(t) for t in transport_enums] if transport_enums else 'None'}")
                 
+                # Add debugging as suggested by Grok
+                app.logger.info(f"Transports enums: {[type(e).__name__ for e in transport_enums]}")  # Should be ['AuthenticatorTransport', ...]
+                
                 # Type assertions for debugging
                 assert isinstance(cred.credential_id, bytes), f"Invalid cred_id type: {type(cred.credential_id)}"
                 
@@ -874,11 +878,17 @@ def begin_authentication():
                     app.logger.info(f"About to create PublicKeyCredentialDescriptor with transport_enums: {transport_enums}")
                     app.logger.info(f"transport_enums types: {[type(t) for t in transport_enums] if transport_enums else 'None'}")
                     
-                    allowed_credentials.append(PublicKeyCredentialDescriptor(
+                    descriptor = PublicKeyCredentialDescriptor(
                         id=cred.credential_id,  # id is bytes
-                        type="public-key",
+                        type=PublicKeyCredentialType.PUBLIC_KEY, # Use enum
                         transports=transport_enums if transport_enums else None  # Use enum values or None
-                    ))
+                    )
+                    
+                    # Add debugging as suggested by Grok
+                    app.logger.info(f"Descriptor type: {type(descriptor.type).__name__}")  # Should be 'PublicKeyCredentialType'
+                    app.logger.info(f"Descriptor transports types: {[type(t).__name__ for t in descriptor.transports or []]}")  # 'AuthenticatorTransport'
+                    
+                    allowed_credentials.append(descriptor)
                     app.logger.info(f"Successfully created PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}")
                 except Exception as e:
                     app.logger.error(f"Error creating PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}: {e}")
@@ -896,13 +906,20 @@ def begin_authentication():
         app.logger.info(f"Stored challenge {challenge_id} in session")
         
         # Generate options
-        options = generate_authentication_options(
-            rp_id=Config.get_webauthn_rp_id(),
-            challenge=challenge,
-            timeout=60000,  # 60 seconds
-            user_verification=UserVerificationRequirement.REQUIRED,  # For biometrics
-            allow_credentials=allowed_credentials if allowed_credentials else None
-        )
+        try:
+            options = generate_authentication_options(
+                rp_id=Config.get_webauthn_rp_id(),
+                challenge=challenge,
+                timeout=60000,  # 60 seconds
+                user_verification=UserVerificationRequirement.REQUIRED,  # For biometrics
+                allow_credentials=allowed_credentials if allowed_credentials else None
+            )
+            app.logger.info(f"Successfully generated authentication options")
+        except Exception as e:
+            import traceback
+            app.logger.error(f"Error generating authentication options: {e}")
+            app.logger.error(f"Full traceback: {traceback.format_exc()}")
+            raise
         
         # Convert to JSON-friendly (library has options_to_json helper if needed)
         options_json = json.loads(options_to_json(options))
