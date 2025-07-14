@@ -101,6 +101,7 @@ HTML_TEMPLATE = '''
         button:hover { background: #388e3c; }
         #status { margin: 16px 0; padding: 12px; border-radius: 6px; background: rgba(255,255,255,0.1); color: #fff; min-height: 32px; }
     </style>
+    <script src="https://unpkg.com/@simplewebauthn/browser@13.1.2/dist/bundle/index.umd.js" defer></script>
 </head>
 <body>
     <div class="container">
@@ -109,57 +110,60 @@ HTML_TEMPLATE = '''
         <button onclick="handleSignup()">Sign Up with Biometrics</button>
         <button onclick="handleLogin()">Login with Biometrics</button>
     </div>
-    <script src="https://unpkg.com/@simplewebauthn/browser@9.0.0/dist/bundle/index.umd.js"></script>
     <script>
-    async function handleSignup() {
-        try {
-            setStatus('Requesting registration options...');
-            const optionsResp = await fetch('/api/begin_registration', { method: 'POST' });
-            const options = await optionsResp.json();
-            setStatus('Prompting for biometrics...');
-            const credential = await SimpleWebAuthnBrowser.startRegistration(options);
-            setStatus('Verifying registration...');
-            const verifyResp = await fetch('/api/verify_registration', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ credential, challenge_id: options.challenge_id })
-            });
-            const result = await verifyResp.json();
-            if (result.verified) {
-                setStatus('✅ Signup successful! You can now log in.');
-            } else {
-                setStatus('❌ Signup failed: ' + (result.error || 'Unknown error'));
+    window.addEventListener('load', () => {
+        async function handleSignup() {
+            try {
+                setStatus('Requesting registration options...');
+                const optionsResp = await fetch('/api/begin_registration', { method: 'POST' });
+                const options = await optionsResp.json();
+                setStatus('Prompting for biometrics...');
+                const credential = await SimpleWebAuthnBrowser.startRegistration(options);
+                setStatus('Verifying registration...');
+                const verifyResp = await fetch('/api/verify_registration', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ credential, challenge_id: options.challenge_id })
+                });
+                const result = await verifyResp.json();
+                if (result.verified) {
+                    setStatus('✅ Signup successful! You can now log in.');
+                } else {
+                    setStatus('❌ Signup failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (err) {
+                setStatus('❌ Signup failed: ' + err.message);
             }
-        } catch (err) {
-            setStatus('❌ Signup failed: ' + err.message);
         }
-    }
-    async function handleLogin() {
-        try {
-            setStatus('Requesting authentication options...');
-            const optionsResp = await fetch('/api/begin_authentication', { method: 'POST' });
-            const options = await optionsResp.json();
-            setStatus('Prompting for biometrics...');
-            const assertion = await SimpleWebAuthnBrowser.startAuthentication(options);
-            setStatus('Verifying login...');
-            const verifyResp = await fetch('/api/verify_authentication', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ credential: assertion, challenge_id: options.challenge_id })
-            });
-            const result = await verifyResp.json();
-            if (result.verified) {
-                setStatus('✅ Login successful!');
-            } else {
-                setStatus('❌ Login failed: ' + (result.error || 'Unknown error'));
+        async function handleLogin() {
+            try {
+                setStatus('Requesting authentication options...');
+                const optionsResp = await fetch('/api/begin_authentication', { method: 'POST' });
+                const options = await optionsResp.json();
+                setStatus('Prompting for biometrics...');
+                const assertion = await SimpleWebAuthnBrowser.startAuthentication(options);
+                setStatus('Verifying login...');
+                const verifyResp = await fetch('/api/verify_authentication', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ credential: assertion, challenge_id: options.challenge_id })
+                });
+                const result = await verifyResp.json();
+                if (result.verified) {
+                    setStatus('✅ Login successful!');
+                } else {
+                    setStatus('❌ Login failed: ' + (result.error || 'Unknown error'));
+                }
+            } catch (err) {
+                setStatus('❌ Login failed: ' + err.message);
             }
-        } catch (err) {
-            setStatus('❌ Login failed: ' + err.message);
         }
-    }
-    function setStatus(msg) {
-        document.getElementById('status').textContent = msg;
-    }
+        window.handleSignup = handleSignup;
+        window.handleLogin = handleLogin;
+        function setStatus(msg) {
+            document.getElementById('status').textContent = msg;
+        }
+    });
     </script>
 </body>
 </html>
