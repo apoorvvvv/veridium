@@ -311,6 +311,17 @@ HTML_TEMPLATE = '''
                     localStorage.removeItem('veridium_user_id');
                     console.log('Registered and stored username:', currentUser);
                     showStatus(`✅ Registration successful! Username: ${result.user_name}`, 'success');
+                    
+                    // Debug: Show registration details
+                    document.body.insertAdjacentHTML("beforeend", `
+                        <div style="padding:10px; border:2px solid green; margin:10px; background: #e6ffe6;">
+                            <strong>REGISTRATION SUCCESS:</strong><br>
+                            user_name: ${result.user_name}<br>
+                            user_id: ${result.user_id}<br>
+                            credential_id: ${result.credential_id}<br>
+                            Stored in localStorage: ${localStorage.getItem('veridium_username')}
+                        </div>
+                    `);
                 } else {
                     showStatus('❌ Registration failed: ' + (result.error || 'Unknown error'), 'error');
                 }
@@ -505,8 +516,11 @@ def begin_registration():
         
         # Create a new user
         user = User.create_user(username, display_name)
+        app.logger.info(f"Created user: {user.user_name} with user_id: {user.user_id}")
+        
         db.session.add(user)
         db.session.flush()  # Get the user ID
+        app.logger.info(f"User added to session, ID: {user.id}")
         
         # Decode stored str to bytes for the library (should be 32 bytes)
         import base64
@@ -596,6 +610,13 @@ def verify_registration():
         
         challenge.used = True
         db.session.commit()
+        
+        # Verify user was actually saved to database
+        saved_user = User.query.filter_by(user_name=user.user_name).first()
+        if saved_user:
+            app.logger.info(f"✅ User verified in database: {saved_user.user_name} (ID: {saved_user.id})")
+        else:
+            app.logger.error(f"❌ User NOT found in database after commit: {user.user_name}")
         
         app.logger.info(f"Registration success for user {user.user_id}")
         return jsonify({
