@@ -517,6 +517,12 @@ def verify_registration():
         
         # Fix: Ensure raw_id is always bytes
         from types import SimpleNamespace
+        import re
+        def camel_to_snake(name):
+            s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+            return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+        # Convert response dict keys to snake_case attributes
+        response_obj = SimpleNamespace(**{camel_to_snake(k): v for k, v in response.items()})
         if 'rawId' in credential:
             raw_id = credential['rawId']
             if isinstance(raw_id, str):
@@ -528,7 +534,7 @@ def verify_registration():
         credential_obj = SimpleNamespace(
             id=credential.get('id'),
             raw_id=raw_id,
-            response=credential.get('response', {}),
+            response=response_obj,
             type=credential.get('type', 'public-key')
         )
         
