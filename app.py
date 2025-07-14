@@ -706,84 +706,20 @@ def verify_registration():
         app.logger.error(f"Unexpected error: {e}")
         return jsonify({'error': str(e), 'verified': False}), 500
 
-# ORIGINAL AUTHENTICATION ENDPOINT (COMMENTED OUT FOR GROK'S VERSION)
-# @app.route('/api/begin_authentication', methods=['POST'])
-# @require_rate_limit(limit=20, window=300)  # 20 auth attempts per 5 minutes
-# @require_webauthn_security()
-# def begin_authentication():
-#     print("[BEGIN_AUTH] incoming cookies:", request.cookies)
-#     print("[BEGIN_AUTH] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
-#     try:
-#         data = request.get_json()
-#         user_id = data.get('user_id')
-#         
-#         # Find user and their credentials
-#         user = User.query.filter_by(user_id=user_id).first()
-#         if not user:
-#             return jsonify({'error': 'User not found'}), 404
-#         
-#         credentials = user.credentials
-#         if not credentials:
-#             return jsonify({'error': 'No credentials found for user'}), 404
-#         
-#         # Create allowed credentials list
-#         allowed_credentials = []
-#         for cred in credentials:
-#             allowed_credentials.append(PublicKeyCredentialDescriptor(
-#                 id=cred.credential_id,
-#                 type="public-key",
-#                 transports=cred.transports or []
-#             ))
-#         
-#         # Generate authentication options
-#         options = generate_authentication_options(
-#             rp_id=Config.get_webauthn_rp_id(),
-#             allow_credentials=allowed_credentials,
-#             user_verification=UserVerificationRequirement.REQUIRED,
-#             timeout=60000
-#         )
-#         
-#         # Store the challenge
-#         challenge = Challenge.create_challenge(
-#             challenge_bytes=options.challenge,
-#             challenge_type='authentication',
-#             user_id=user.id
-#         )
-#         db.session.add(challenge)
-#         db.session.commit()
-#         
-#         # Use the library helper to produce a fully JSON-serializable dict
-#         # 1) Dump out the raw JSON string the helper produced
-#         raw_json = options_to_json(options)
-#         print("[DEBUG] options_to_json raw output (first 200 chars):", repr(raw_json)[:200])
-#         
-#         # 2) Load into a dict and print each top-level value's type
-#         opts_json = json.loads(raw_json)
-#         print("[DEBUG] opts_json types:", {k: type(v).__name__ for k,v in opts_json.items()})
-#         
-#         # Inject your DB challenge ID so your front end can pass it back
-#         opts_json["challenge_id"] = challenge.id
-#         
-#         return jsonify(opts_json)
-#         
-#     except Exception as e:
-#         db.session.rollback()
-#         return jsonify({'error': str(e)}), 400
-
 # GROK'S IMPLEMENTATION - BEGIN AUTHENTICATION
 @app.route('/api/begin_authentication', methods=['POST'])
 def begin_authentication():
     try:
         data = request.get_json()
         app.logger.info(f"Begin auth request: {data}")
-        
+
         username = data.get('username')  # Assume frontend sends username for lookup
         app.logger.info(f"Looking up user with username: {username}")
-        
+
         # List all users for debugging
         all_users = User.query.all()
         app.logger.info(f"All users in database: {[u.user_name for u in all_users]}")
-        
+
         # Fetch user and their stored credentials
         user = User.query.filter_by(user_name=username).first()
         if not user:
@@ -793,22 +729,22 @@ def begin_authentication():
             available_users = [u.user_name for u in all_users]
             app.logger.info(f"Available users: {available_users}")
             return jsonify({
-                'error': 'User not found', 
+                'error': 'User not found',
                 'verified': False,
                 'requested_username': username,
                 'available_users': available_users
             }), 400
-        
+
         # Get allowed credentials (list of dicts with id as base64url)
         allowed_credentials = []
         app.logger.info(f"Processing {len(user.credentials)} credentials for user {username}")
-        
+
         for cred in user.credentials:
             try:
                 # Handle transports field - ensure it's a list with proper logging
                 transports = cred.transports if cred.transports else []
                 app.logger.info(f"Raw transports for cred_id {cred.credential_id.hex()[:8]}: {transports} (type: {type(transports)})")
-                
+
                 # First, normalize to list if str (as suggested by Grok)
                 if isinstance(transports, str):
                     try:
@@ -817,11 +753,11 @@ def begin_authentication():
                     except json.JSONDecodeError:
                         app.logger.warning(f"Invalid transports JSON for cred_id {cred.credential_id.hex()[:8]} - treating as empty")
                         transports = []
-                
+
                 if not isinstance(transports, list):
                     app.logger.warning(f"Transports not a list for cred_id {cred.credential_id.hex()[:8]} - treating as empty")
                     transports = []
-                
+
                 # Define a mapping for all supported transport types
                 TRANSPORT_MAP = {
                     "usb": AuthenticatorTransport.USB,
@@ -831,7 +767,7 @@ def begin_authentication():
                     "cable": AuthenticatorTransport.CABLE,
                     "hybrid": AuthenticatorTransport.HYBRID,
                 }
-                
+
                 # Build enums (as suggested by Grok)
                 transport_enums = []
                 for transport_item in transports:
@@ -848,9 +784,9 @@ def begin_authentication():
                         if isinstance(transport_item, AuthenticatorTransport):
                             transport_enums.append(transport_item)
                             app.logger.info(f"Added existing transport enum: {transport_item}")
-                
+
                 app.logger.info(f"Built transport_enums types: {[type(t).__name__ for t in transport_enums]}")  # Should be ['AuthenticatorTransport', ...]
-                
+
                 # For serialization - add safety (as suggested by Grok)
                 transport_values = []
                 for t in transport_enums:
@@ -858,34 +794,37 @@ def begin_authentication():
                         transport_values.append(t.value)
                     else:
                         app.logger.error(f"Invalid type in transport_enums: {type(t)} - skipping")
-                
+
                 app.logger.info(f"Safe transport values: {transport_values}")
-                
+
                 # Type assertions for debugging
                 assert isinstance(cred.credential_id, bytes), f"Invalid cred_id type: {type(cred.credential_id)}"
-                
+
                 try:
                     app.logger.info(f"About to create PublicKeyCredentialDescriptor with transport_enums: {transport_enums}")
                     app.logger.info(f"transport_enums types: {[type(t) for t in transport_enums] if transport_enums else 'None'}")
-                    
-                                    descriptor = PublicKeyCredentialDescriptor(
-                    id=cred.credential_id,  # id is bytes
-                    type=PublicKeyCredentialType.PUBLIC_KEY, # Use enum
-                    transports=transport_enums if transport_enums else None  # Use enum values or None
-                )
-                
-                allowed_credentials.append(descriptor)
-                app.logger.info(f"Successfully created PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}")
+
+                    descriptor = PublicKeyCredentialDescriptor(
+                        id=cred.credential_id,  # id is bytes
+                        type=PublicKeyCredentialType.PUBLIC_KEY, # Use enum
+                        transports=transport_enums if transport_enums else None  # Use enum values or None
+                    )
+
+                    allowed_credentials.append(descriptor)
+                    app.logger.info(f"Successfully created PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}")
+                except Exception as e:
+                    app.logger.error(f"Error processing credential {cred.credential_id.hex()[:8]}: {e}")
+                    continue
             except Exception as e:
                 app.logger.error(f"Error processing credential {cred.credential_id.hex()[:8]}: {e}")
                 continue
-        
+
         # Generate challenge
         challenge = os.urandom(32)
         challenge_id = str(uuid.uuid4())
         session[f'challenge_{challenge_id}'] = challenge  # Store challenge by ID
         app.logger.info(f"Stored challenge {challenge_id} in session")
-        
+
         # Generate options
         try:
             options = generate_authentication_options(
@@ -901,20 +840,20 @@ def begin_authentication():
             app.logger.error(f"Error generating authentication options: {e}")
             app.logger.error(f"Full traceback: {traceback.format_exc()}")
             raise
-        
+
         # Convert to JSON-friendly (library has options_to_json helper if needed)
         options_json = json.loads(options_to_json(options))
         options_json['challenge_id'] = challenge_id  # Add for frontend to send back
-        
+
         app.logger.info(f"Generated auth options for user {username} with {len(allowed_credentials)} credentials")
-        
+
         # Log the final allowed_credentials for debugging (as suggested by Grok)
         for i, cred_desc in enumerate(allowed_credentials):
             transport_values = [t.value for t in cred_desc.transports] if cred_desc.transports else None
             app.logger.info(f"Credential {i}: id={cred_desc.id.hex()[:8]}..., transports={transport_values}")
-        
+
         return jsonify(options_json), 200
-    
+
     except Exception as e:
         app.logger.error(f"Begin authentication error: {e}")
         return jsonify({'error': str(e), 'verified': False}), 500
