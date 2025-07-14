@@ -20,6 +20,7 @@ from datetime import datetime
 import secrets
 from collections import namedtuple
 from webauthn.helpers import parse_registration_credential_json, parse_authentication_credential_json
+from webauthn.helpers.exceptions import InvalidRegistrationResponse, InvalidAuthenticationResponse
 
 print("*** RUNNING UPDATED APP.PY WITH STRING USER_ID FIX ***")
 
@@ -548,7 +549,7 @@ def verify_registration():
         # Parse the JSON dict to the required struct (handles base64 decoding internally)
         credential = parse_registration_credential_json(credential_json)
         
-        # Verify
+        # Verify the registration - success if no exception
         verification = verify_registration_response(
             credential=credential,
             expected_challenge=challenge.challenge,  # Pass as bytes
@@ -557,33 +558,35 @@ def verify_registration():
             require_user_verification=True
         )
         
-        if verification.verified:
-            cred = Credential(
-                user_id=user.id,
-                credential_id=verification.credential_id,
-                public_key=verification.credential_public_key,
-                sign_count=verification.sign_count,
-                transports=credential_json.get('response', {}).get('transports', [])  # Still grab from JSON
-            )
-            db.session.add(cred)
+        # No need for if verification.verified - success is indicated by no exception
+        # Extract and store credential data
+        cred = Credential(
+            user_id=user.id,
+            credential_id=verification.credential_id,
+            public_key=verification.credential_public_key,
+            sign_count=verification.sign_count,
+            transports=credential_json.get('response', {}).get('transports', [])  # Still grab from JSON
+        )
+        db.session.add(cred)
+        
+        challenge.used = True
+        db.session.commit()
+        
+        app.logger.info(f"Registration success for user {user.user_id}")
+        return jsonify({
+            'verified': True,
+            'user_id': user.user_id,
+            'credential_id': base64.urlsafe_b64encode(verification.credential_id).decode('utf-8')
+        })
             
-            challenge.used = True
-            db.session.commit()
-            
-            app.logger.info(f"Registration success for user {user.user_id}")
-            return jsonify({
-                'verified': True,
-                'user_id': user.user_id,
-                'credential_id': base64.urlsafe_b64encode(verification.credential_id).decode('utf-8')
-            })
-        else:
-            app.logger.error(f"Verification failed for {user.user_id}: NOT_FOUND")
-            return jsonify({'verified': False, 'error': 'Verification failed - NOT_FOUND'})
-            
+    except InvalidRegistrationResponse as e:
+        db.session.rollback()
+        app.logger.error(f"Registration verification failed: {e}")
+        return jsonify({'error': str(e), 'verified': False}), 400
     except Exception as e:
         db.session.rollback()
-        app.logger.error(f"Registration error: {str(e)}")
-        return jsonify({'verified': False, 'error': str(e)})
+        app.logger.error(f"Unexpected error: {e}")
+        return jsonify({'error': str(e), 'verified': False}), 500
 
 @app.route('/api/begin_authentication', methods=['POST'])
 @require_rate_limit(limit=20, window=300)  # 20 auth attempts per 5 minutes
@@ -681,7 +684,7 @@ def verify_authentication():
         # Parse the JSON dict to the required struct (handles base64 decoding internally)
         credential = parse_authentication_credential_json(credential_json)
         
-        # Verify
+        # Verify the authentication - success if no exception
         verification = verify_authentication_response(
             credential=credential,
             expected_challenge=challenge.challenge,  # Pass as bytes
@@ -692,27 +695,28 @@ def verify_authentication():
             require_user_verification=True
         )
         
-        if verification.verified:
-            db_credential.sign_count = verification.new_sign_count
-            db_credential.last_used = datetime.utcnow()
-            user.last_login = datetime.utcnow()
-            challenge.used = True
-            db.session.commit()
+        # No need for if verification.verified - success is indicated by no exception
+        db_credential.sign_count = verification.new_sign_count
+        db_credential.last_used = datetime.utcnow()
+        user.last_login = datetime.utcnow()
+        challenge.used = True
+        db.session.commit()
+        
+        app.logger.info(f"Authentication success for user {user.user_id}")
+        return jsonify({
+            'verified': True,
+            'user_id': user.user_id,
+            'last_login': user.last_login.isoformat()
+        })
             
-            app.logger.info(f"Authentication success for user {user.user_id}")
-            return jsonify({
-                'verified': True,
-                'user_id': user.user_id,
-                'last_login': user.last_login.isoformat()
-            })
-        else:
-            app.logger.error(f"Authentication failed for {user.user_id}: NOT_FOUND")
-            return jsonify({'verified': False, 'error': 'Authentication failed - NOT_FOUND'})
-            
+    except InvalidAuthenticationResponse as e:
+        db.session.rollback()
+        app.logger.error(f"Authentication verification failed: {e}")
+        return jsonify({'error': str(e), 'verified': False}), 400
     except Exception as e:
         db.session.rollback()
-        app.logger.error(f"Authentication error: {str(e)}")
-        return jsonify({'verified': False, 'error': str(e)})
+        app.logger.error(f"Unexpected error: {e}")
+        return jsonify({'error': str(e), 'verified': False}), 500
 
 @app.route('/api/generate_qr', methods=['POST'])
 def generate_qr():
