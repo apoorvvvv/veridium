@@ -34,6 +34,10 @@ from security import init_security, require_rate_limit, require_webauthn_securit
 app = Flask(__name__)
 app.config.from_object(Config)
 
+# Configure Flask sessions for authentication
+app.secret_key = os.environ.get('SECRET_KEY', 'fallback_for_local')
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+
 # Create config instance for WebAuthn properties
 config_instance = Config()
 
@@ -348,12 +352,13 @@ HTML_TEMPLATE = '''
                     method: 'POST',
                     credentials: 'include', // <-- send/receive cookies
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({user_id: currentUser})
+                    body: JSON.stringify({username: currentUser})
                 });
                 
                 if (!optionsResp.ok) throw new Error('Authentication setup failed');
                 
                 const options = await optionsResp.json();
+                console.log('Options received:', options);
                 showStatus('Please complete biometric authentication...', 'info');
                 
                 const assertion = await SimpleWebAuthnBrowser.startAuthentication(options);
@@ -364,7 +369,6 @@ HTML_TEMPLATE = '''
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         credential: assertion,
-                        user_id: currentUser,
                         challenge_id: options.challenge_id
                     })
                 });
@@ -377,6 +381,7 @@ HTML_TEMPLATE = '''
                     showStatus('❌ Authentication failed: ' + (result.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
+                console.error('Auth setup failed details:', error.message, error.stack);
                 let errorMsg = error.message;
                 if (errorMsg.includes('not supported on sites with TLS certificate errors')) {
                     errorMsg = 'WebAuthn blocked due to certificate error. Please use HTTP: http://192.168.29.237:5001';
@@ -668,11 +673,15 @@ def verify_registration():
 def begin_authentication():
     try:
         data = request.get_json()
+        app.logger.info(f"Begin auth request: {data}")
+        
         username = data.get('username')  # Assume frontend sends username for lookup
+        app.logger.info(f"Looking up user with username: {username}")
         
         # Fetch user and their stored credentials
         user = User.query.filter_by(user_name=username).first()
         if not user:
+            app.logger.warning(f"User not found for username: {username}")
             return jsonify({'error': 'User not found', 'verified': False}), 400
         
         # Get allowed credentials (list of dicts with id as base64url)
@@ -688,6 +697,7 @@ def begin_authentication():
         challenge = os.urandom(32)
         challenge_id = str(uuid.uuid4())
         session[f'challenge_{challenge_id}'] = challenge  # Store challenge by ID
+        app.logger.info(f"Stored challenge {challenge_id} in session")
         
         # Generate options
         options = generate_authentication_options(
@@ -702,6 +712,7 @@ def begin_authentication():
         options_json = json.loads(options_to_json(options))
         options_json['challenge_id'] = challenge_id  # Add for frontend to send back
         
+        app.logger.info(f"Generated auth options for user {username} with {len(allowed_credentials)} credentials")
         return jsonify(options_json), 200
     
     except Exception as e:
@@ -781,12 +792,15 @@ def begin_authentication():
 def verify_authentication():
     try:
         data = request.get_json()
+        app.logger.info(f"Verify auth request: challenge_id={data.get('challenge_id')}")
+        
         credential = data.get('credential')  # From SimpleWebAuthn startAuthentication
         challenge_id = data.get('challenge_id')
         
         # Get stored challenge
         stored_challenge = session.get(f'challenge_{challenge_id}')
         if not stored_challenge:
+            app.logger.warning(f"Challenge not found in session: {challenge_id}")
             return jsonify({'error': 'Challenge not found', 'verified': False}), 400
         
         # Parse credential JSON to struct (use library helper if available)
