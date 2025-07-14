@@ -223,10 +223,19 @@ HTML_TEMPLATE = '''
             <p>• Android: Fingerprint, Face Unlock (Chrome)</p>
             <p>• Desktop: Cross-device via QR code</p>
         </div>
+        
+        <!-- Camera Modal Overlay -->
+        <div id="qrModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; flex-direction: column; align-items: center; justify-content: center;">
+            <video id="qrVideo" style="width: 80%; max-width: 400px; background: black;"></video>
+            <canvas id="qrCanvas" style="display: none;"></canvas>
+            <button onclick="closeQRModal()" style="margin-top: 10px; padding: 10px;">Cancel</button>
+            <p id="qrStatus" style="color: white; margin-top: 10px;"></p>
+        </div>
     </div>
 
     <script src="https://unpkg.com/@simplewebauthn/browser@9/dist/bundle/index.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <script>
         // Explicitly set withCredentials and origin for Socket.IO
         const socket = io({
@@ -236,10 +245,24 @@ HTML_TEMPLATE = '''
         });
         let currentUser = localStorage.getItem('veridium_username');
         
+        // QR Scanner variables
+        let videoElement, canvasElement, canvasContext, qrModal, qrStatus;
+        let scanning = false;
+        let stream = null;
+        
         function showStatus(message, type = 'info') {
             const statusDiv = document.getElementById('status');
             statusDiv.innerHTML = `<div class="${type}">${message}</div>`;
             setTimeout(() => statusDiv.innerHTML = '', 5000);
+        }
+        
+        // Initialize QR Scanner elements
+        function initQRScanner() {
+            qrModal = document.getElementById('qrModal');
+            qrStatus = document.getElementById('qrStatus');
+            videoElement = document.getElementById('qrVideo');
+            canvasElement = document.getElementById('qrCanvas');
+            canvasContext = canvasElement.getContext('2d');
         }
         
         // Debug logging functions for authentication tracking
@@ -293,8 +316,8 @@ HTML_TEMPLATE = '''
                     credentials: "include",
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({
-                        username: 'veridium_user_' + Date.now(),
-                        displayName: 'Veridium User'
+                    username: 'veridium_user_' + Date.now(),
+                    displayName: 'Veridium User'
                     }),
                 });
                 
@@ -429,20 +452,84 @@ HTML_TEMPLATE = '''
         }
         
         async function scanQR() {
-            const sessionId = prompt('Enter session ID from QR code (for testing):');
-            if (!sessionId || !currentUser) {
-                showStatus('❌ Need session ID and username', 'error');
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showStatus('❌ Camera not supported in this browser', 'error');
                 return;
             }
-            
+
+            if (!currentUser) {
+                showStatus('❌ Need username', 'error');
+                return;
+            }
+
+            // Show modal and start camera
+            qrModal.style.display = 'flex';
+            qrStatus.textContent = 'Opening camera...';
+
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment' }  // Rear camera on mobile
+                });
+                videoElement.srcObject = stream;
+                await videoElement.play();  // Start playback
+
+                // Set canvas size to match video
+                canvasElement.width = videoElement.videoWidth;
+                canvasElement.height = videoElement.videoHeight;
+
+                scanning = true;
+                qrStatus.textContent = 'Scanning QR code...';
+                requestAnimationFrame(scanFrame);
+            } catch (err) {
+                qrStatus.textContent = '❌ Camera access denied or error: ' + err.message;
+                console.error('getUserMedia error:', err);
+            }
+        }
+        
+        function scanFrame() {
+            if (!scanning) return;
+
+            // Draw current video frame to canvas
+            canvasContext.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+            const imageData = canvasContext.getImageData(0, 0, canvasElement.width, canvasElement.height);
+
+            // Scan with jsQR
+            const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+            if (code) {
+                const sessionId = code.data;  // Extract session ID (assume QR is plain string; parse JSON if needed)
+                qrStatus.textContent = '✅ QR detected: ' + sessionId;
+                stopScanning();
+                // Proceed with auth logic
+                handleCrossDeviceAuth(sessionId);
+            } else {
+                requestAnimationFrame(scanFrame);  // Continue scanning
+            }
+        }
+
+        function stopScanning() {
+            scanning = false;
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());  // Release camera
+                stream = null;
+            }
+            qrModal.style.display = 'none';
+        }
+
+        function closeQRModal() {
+            stopScanning();
+            showStatus('Scan cancelled', 'info');
+        }
+
+        async function handleCrossDeviceAuth(sessionId) {
             try {
                 const response = await fetch('/api/authenticate_qr', {
                     method: 'POST',
-                    credentials: 'include', // <-- send/receive cookies
+                    credentials: 'include',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         session_id: sessionId,
-                        user_id: currentUser  // This is now the username
+                        user_id: currentUser
                     })
                 });
                 
@@ -473,6 +560,9 @@ HTML_TEMPLATE = '''
         if (currentUser) {
             showStatus(`Current User: ${currentUser}`, 'info');
         }
+        
+        // Initialize QR Scanner on page load
+        initQRScanner();
     </script>
 </body>
 </html>
@@ -654,16 +744,16 @@ def verify_registration():
         else:
             transports_json = []
         
-        cred = Credential(
-            user_id=user.id,
-            credential_id=verification.credential_id,
-            public_key=verification.credential_public_key,
-            sign_count=verification.sign_count,
+            cred = Credential(
+                user_id=user.id,
+                credential_id=verification.credential_id,
+                public_key=verification.credential_public_key,
+                sign_count=verification.sign_count,
             transports=transports_json  # Store as list of strings
-        )
-        db.session.add(cred)
-        
-        challenge.used = True
+            )
+            db.session.add(cred)
+            
+            challenge.used = True
         
         # Explicit commit with error handling
         try:
@@ -689,14 +779,14 @@ def verify_registration():
         else:
             app.logger.error(f"❌ Credential NOT found in database after commit")
             return jsonify({'error': 'Credential not persisted after registration', 'verified': False}), 500
-        
-        app.logger.info(f"Registration success for user {user.user_id}")
-        return jsonify({
-            'verified': True,
-            'user_id': user.user_id,
+            
+            app.logger.info(f"Registration success for user {user.user_id}")
+            return jsonify({
+                'verified': True,
+                'user_id': user.user_id,
             'user_name': user.user_name,  # Add user_name to response
-            'credential_id': base64.urlsafe_b64encode(verification.credential_id).decode('utf-8')
-        })
+                'credential_id': base64.urlsafe_b64encode(verification.credential_id).decode('utf-8')
+            })
             
     except InvalidRegistrationResponse as e:
         db.session.rollback()
@@ -828,8 +918,8 @@ def begin_authentication():
 
         # Generate options
         try:
-            options = generate_authentication_options(
-                rp_id=Config.get_webauthn_rp_id(),
+        options = generate_authentication_options(
+            rp_id=Config.get_webauthn_rp_id(),
                 challenge=challenge,
                 timeout=60000,  # 60 seconds
                 user_verification=UserVerificationRequirement.REQUIRED,  # For biometrics
@@ -854,7 +944,7 @@ def begin_authentication():
             app.logger.info(f"Credential {i}: id={cred_desc.id.hex()[:8]}..., transports={transport_values}")
 
         return jsonify(options_json), 200
-
+        
     except Exception as e:
         app.logger.error(f"Begin authentication error: {e}")
         return jsonify({'error': str(e), 'verified': False}), 500
@@ -976,10 +1066,10 @@ def verify_authentication():
         # Extract and update
         new_sign_count = verified_authentication.new_sign_count
         db_credential.sign_count = new_sign_count  # Update in DB to prevent replays
-        db_credential.last_used = datetime.utcnow()
-        user.last_login = datetime.utcnow()
-        db.session.commit()
-        
+            db_credential.last_used = datetime.utcnow()
+            user.last_login = datetime.utcnow()
+            db.session.commit()
+            
         # Optional: Get user_handle (user_id bytes) for confirmation from the input credential
         user_handle = auth_credential.response.user_handle  # bytes or None
         
@@ -1002,8 +1092,8 @@ def verify_authentication():
             user_id = user.user_id if isinstance(user.user_id, bytes) else base64.urlsafe_b64decode(user.user_id + '==')
         
         # Success response
-        return jsonify({
-            'verified': True, 
+            return jsonify({
+                'verified': True,
             'user_id': base64.urlsafe_b64encode(user_id).decode('utf-8').rstrip('=') if user_id else None
         }), 200
     
