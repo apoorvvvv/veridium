@@ -20,7 +20,7 @@ import qrcode
 import io
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import secrets
 from collections import namedtuple
 from webauthn.helpers import parse_registration_credential_json, parse_authentication_credential_json
@@ -462,13 +462,29 @@ HTML_TEMPLATE = '''
                 return;
             }
 
+            // Check camera permission first
+            try {
+                const permission = await navigator.permissions.query({name: 'camera'});
+                if (permission.state === 'denied') {
+                    showStatus('❌ Camera access denied. Please enable camera in browser settings and reload the page.', 'error');
+                    return;
+                }
+            } catch (err) {
+                // Permission API not supported, continue anyway
+                console.log('Permission API not supported, proceeding with camera request');
+            }
+
             // Show modal and start camera
             qrModal.style.display = 'flex';
-            qrStatus.textContent = 'Opening camera...';
+            qrStatus.textContent = 'Requesting camera access...';
 
             try {
                 stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment' }  // Rear camera on mobile
+                    video: { 
+                        facingMode: 'environment',  // Rear camera on mobile
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
                 });
                 videoElement.srcObject = stream;
                 await videoElement.play();  // Start playback
@@ -481,7 +497,13 @@ HTML_TEMPLATE = '''
                 qrStatus.textContent = 'Scanning QR code...';
                 requestAnimationFrame(scanFrame);
             } catch (err) {
-                qrStatus.textContent = '❌ Camera access denied or error: ' + err.message;
+                if (err.name === 'NotAllowedError') {
+                    qrStatus.textContent = '❌ Camera access denied. Please enable camera in browser settings.';
+                } else if (err.name === 'NotFoundError') {
+                    qrStatus.textContent = '❌ No camera found on this device.';
+                } else {
+                    qrStatus.textContent = '❌ Camera error: ' + err.message;
+                }
                 console.error('getUserMedia error:', err);
             }
         }
@@ -497,11 +519,22 @@ HTML_TEMPLATE = '''
             const code = jsQR(imageData.data, imageData.width, imageData.height);
 
             if (code) {
-                const sessionId = code.data;  // Extract session ID (assume QR is plain string; parse JSON if needed)
-                qrStatus.textContent = '✅ QR detected: ' + sessionId;
-                stopScanning();
-                // Proceed with auth logic
-                handleCrossDeviceAuth(sessionId);
+                try {
+                    const qrData = JSON.parse(code.data);
+                    if (qrData.action === 'cross_device_auth' && qrData.session_id) {
+                        const sessionId = qrData.session_id;
+                        qrStatus.textContent = '✅ QR detected! Processing...';
+                        stopScanning();
+                        // Proceed with cross-device authentication
+                        handleCrossDeviceAuth(sessionId);
+                    } else {
+                        qrStatus.textContent = '❌ Invalid QR code format';
+                        requestAnimationFrame(scanFrame);  // Continue scanning
+                    }
+                } catch (err) {
+                    qrStatus.textContent = '❌ Invalid QR code data';
+                    requestAnimationFrame(scanFrame);  // Continue scanning
+                }
             } else {
                 requestAnimationFrame(scanFrame);  // Continue scanning
             }
@@ -523,32 +556,64 @@ HTML_TEMPLATE = '''
 
         async function handleCrossDeviceAuth(sessionId) {
             try {
-                const response = await fetch('/api/authenticate_qr', {
+                showStatus('Initiating cross-device authentication...', 'info');
+                
+                // Step 1: Get authentication options
+                const authResponse = await fetch('/api/authenticate_qr', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ session_id: sessionId })
+                });
+                
+                const authResult = await authResponse.json();
+                
+                if (!authResult.success) {
+                    showStatus('❌ Authentication setup failed: ' + (authResult.error || 'Unknown error'), 'error');
+                    return;
+                }
+                
+                showStatus('Please complete biometric authentication...', 'info');
+                
+                // Step 2: Trigger biometric authentication
+                const assertion = await SimpleWebAuthnBrowser.startAuthentication(authResult.auth_options);
+                
+                // Step 3: Verify the authentication
+                const verifyResponse = await fetch('/api/verify_cross_device_auth', {
                     method: 'POST',
                     credentials: 'include',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        session_id: sessionId,
-                        user_id: currentUser
+                        credential: assertion,
+                        challenge_id: authResult.auth_options.challenge_id
                     })
                 });
                 
-                const result = await response.json();
+                const verifyResult = await verifyResponse.json();
                 
-                if (result.success) {
-                    showStatus('✅ QR authentication successful!', 'success');
+                if (verifyResult.success) {
+                    showStatus('✅ Cross-device authentication successful! Desktop will be logged in automatically.', 'success');
+                    // The desktop will receive the WebSocket notification and log in automatically
                 } else {
-                    showStatus('❌ QR authentication failed: ' + (result.error || 'Unknown error'), 'error');
+                    showStatus('❌ Cross-device authentication failed: ' + (verifyResult.error || 'Unknown error'), 'error');
                 }
             } catch (error) {
-                showStatus('❌ QR authentication error: ' + error.message, 'error');
+                console.error('Cross-device auth error:', error);
+                showStatus('❌ Cross-device authentication error: ' + error.message, 'error');
             }
         }
         
         // Socket.IO event handlers
         socket.on('session_authenticated', function(data) {
-            showStatus('✅ Cross-device authentication successful!', 'success');
+            showStatus(`✅ Cross-device authentication successful! Logged in as: ${data.user_name}`, 'success');
             document.getElementById('qr-section').style.display = 'none';
+            
+            // Automatically log in the user on desktop
+            currentUser = data.user_name;
+            localStorage.setItem('veridium_username', currentUser);
+            
+            // Update UI to show logged in state
+            showStatus(`Welcome back, ${data.user_name}!`, 'success');
         });
         
         socket.on('session_expired', function(data) {
@@ -1104,16 +1169,95 @@ def verify_authentication():
         app.logger.error(f"Unexpected error: {e}")
         return jsonify({'error': str(e), 'verified': False}), 500
 
+@app.route('/api/verify_cross_device_auth', methods=['POST'])
+def verify_cross_device_auth():
+    try:
+        data = request.get_json()
+        credential = data.get('credential')
+        challenge_id = data.get('challenge_id')
+        
+        # Get stored challenge
+        stored_challenge_data = session.get(f'cross_device_challenge_{challenge_id}')
+        if not stored_challenge_data:
+            return jsonify({'success': False, 'error': 'Challenge not found'}), 400
+        
+        stored_challenge = stored_challenge_data['challenge']
+        session_id = stored_challenge_data['session_id']
+        
+        # Parse credential
+        auth_credential = parse_authentication_credential_json(credential)
+        
+        # Find credential in database
+        cred_id_bytes = base64url_to_bytes(credential['id'])
+        db_credential = Credential.query.filter_by(credential_id=cred_id_bytes).first()
+        if not db_credential:
+            return jsonify({'success': False, 'error': 'Credential not found'}), 400
+        
+        # Get user
+        user = User.query.filter_by(id=db_credential.user_id).first()
+        if not user:
+            return jsonify({'success': False, 'error': 'User not found'}), 400
+        
+        # Verify authentication
+        verified_authentication = verify_authentication_response(
+            credential=auth_credential,
+            expected_challenge=stored_challenge,
+            expected_rp_id=Config.get_webauthn_rp_id(),
+            expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
+            credential_public_key=db_credential.public_key,
+            credential_current_sign_count=db_credential.sign_count,
+            require_user_verification=True
+        )
+        
+        # Update credential
+        db_credential.sign_count = verified_authentication.new_sign_count
+        db_credential.last_used = datetime.utcnow()
+        user.last_login = datetime.utcnow()
+        
+        # Update cross-device session
+        session_obj = CrossDeviceSession.query.filter_by(session_id=session_id).first()
+        if session_obj:
+            session_obj.authenticate(user.user_id)
+        
+        db.session.commit()
+        
+        # Emit success to desktop via WebSocket
+        socketio.emit('session_authenticated', {
+            'session_id': session_id,
+            'user_id': user.user_id,
+            'user_name': user.user_name
+        }, room=session_id)
+        
+        # Clean up session
+        session.pop(f'cross_device_challenge_{challenge_id}', None)
+        
+        return jsonify({
+            'success': True,
+            'user_id': user.user_id,
+            'user_name': user.user_name,
+            'message': 'Cross-device authentication successful'
+        })
+        
+    except InvalidAuthenticationResponse as e:
+        app.logger.error(f"Cross-device authentication verification failed: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 400
+    except Exception as e:
+        app.logger.error(f"Cross-device authentication error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/generate_qr', methods=['POST'])
 def generate_qr():
     try:
-        # Create a new cross-device session
+        # Create a new cross-device session with minimal data
+        session_id = secrets.token_urlsafe(32)
         session_data = {
-            'session_id': secrets.token_urlsafe(32),
-            'origin': config_instance.WEBAUTHN_RP_ORIGIN,
-            'timestamp': datetime.utcnow().isoformat()
+            'session_id': session_id,
+            'rp_id': Config.get_webauthn_rp_id(),
+            'timestamp': datetime.utcnow().isoformat(),
+            'expires_at': (datetime.utcnow() + timedelta(minutes=5)).isoformat()  # 5 minute expiry
         }
         
+        # Store session data in database
         session_obj = CrossDeviceSession.create_session(
             qr_data=json.dumps(session_data),
             desktop_session_id=session.get('session_id')
@@ -1121,8 +1265,13 @@ def generate_qr():
         db.session.add(session_obj)
         db.session.commit()
         
-        # Generate QR code
-        qr_data = f"{config_instance.WEBAUTHN_RP_ORIGIN}/qr/{session_obj.session_id}"
+        # Generate QR code with minimal data (just session ID and RP ID)
+        qr_data = json.dumps({
+            'session_id': session_id,
+            'rp_id': Config.get_webauthn_rp_id(),
+            'action': 'cross_device_auth'
+        })
+        
         qr = qrcode.QRCode(version=1, box_size=10, border=5)
         qr.add_data(qr_data)
         qr.make(fit=True)
@@ -1135,7 +1284,7 @@ def generate_qr():
         img_str = base64.b64encode(img_buffer.getvalue()).decode()
         
         return jsonify({
-            'session_id': session_obj.session_id,
+            'session_id': session_id,
             'qr_image': f'data:image/png;base64,{img_str}',
             'expires_at': session_obj.expires_at.isoformat()
         })
@@ -1149,85 +1298,74 @@ def authenticate_qr():
     try:
         data = request.get_json()
         session_id = data.get('session_id')
-        user_id = data.get('user_id')
         
         # Find the session
         session_obj = CrossDeviceSession.query.filter_by(session_id=session_id).first()
         if not session_obj or not session_obj.is_valid():
             return jsonify({'success': False, 'error': 'Invalid or expired session'})
         
-        # Find the user
-        user = User.query.filter_by(user_id=user_id).first()
-        if not user:
-            return jsonify({'success': False, 'error': 'User not found'})
+        # Parse session data
+        session_data = json.loads(session_obj.qr_data)
         
-        # Authenticate the session
-        session_obj.authenticate(user.user_id)
-        db.session.commit()
+        # Generate authentication options for biometric prompt
+        challenge = os.urandom(32)
+        challenge_id = str(uuid.uuid4())
+        session[f'challenge_{challenge_id}'] = challenge
         
-        # Emit success to desktop
-        socketio.emit('session_authenticated', {
+        # Get all users for discoverable credentials (resident keys)
+        all_users = User.query.all()
+        allowed_credentials = []
+        
+        for user in all_users:
+            for cred in user.credentials:
+                try:
+                    descriptor = PublicKeyCredentialDescriptor(
+                        id=cred.credential_id,
+                        type=PublicKeyCredentialType.PUBLIC_KEY,
+                        transports=[AuthenticatorTransport.HYBRID, AuthenticatorTransport.INTERNAL]
+                    )
+                    allowed_credentials.append(descriptor)
+                except Exception as e:
+                    app.logger.error(f"Error processing credential: {e}")
+                    continue
+        
+        # Generate authentication options
+        options = generate_authentication_options(
+            rp_id=Config.get_webauthn_rp_id(),
+            challenge=challenge,
+            timeout=60000,
+            user_verification=UserVerificationRequirement.REQUIRED,
+            allow_credentials=allowed_credentials if allowed_credentials else None
+        )
+        
+        # Store challenge for verification
+        session[f'cross_device_challenge_{challenge_id}'] = {
+            'challenge': challenge,
             'session_id': session_id,
-            'user_id': user.user_id
-        }, room=session_id)
+            'timestamp': datetime.utcnow().isoformat()
+        }
         
-        return jsonify({'success': True})
+        # Convert to JSON
+        options_json = json.loads(options_to_json(options))
+        options_json['challenge_id'] = challenge_id
+        
+        return jsonify({
+            'success': True,
+            'auth_options': options_json,
+            'message': 'Biometric authentication required'
+        })
         
     except Exception as e:
-        db.session.rollback()
+        app.logger.error(f"QR authentication error: {e}")
         return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/qr/<session_id>')
 def qr_redirect(session_id):
-    """Handle QR code scans from mobile devices"""
-    session_obj = CrossDeviceSession.query.filter_by(session_id=session_id).first()
-    if not session_obj or not session_obj.is_valid():
-        return "Session expired or invalid", 400
-    
-    # Redirect to mobile auth page
-    return render_template_string('''
-    <html>
-    <head>
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Veridium Mobile Auth</title>
-        <style>
-            body { font-family: sans-serif; padding: 20px; text-align: center; }
-            button { padding: 15px 30px; font-size: 18px; background: #007AFF; color: white; border: none; border-radius: 8px; }
-        </style>
-    </head>
-    <body>
-        <h2>🔐 Veridium Authentication</h2>
-        <p>Complete authentication on this mobile device</p>
-        <button onclick="authenticate()">Authenticate</button>
-        <div id="status"></div>
-        <script>
-            function authenticate() {
-                // This would trigger the mobile biometric authentication
-                // For now, simulate with user input
-                const userId = prompt('Enter your User ID:');
-                if (userId) {
-                    fetch('/api/authenticate_qr', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({
-                            session_id: '{{ session_id }}',
-                            user_id: userId
-                        })
-                    })
-                    .then(r => r.json())
-                    .then(data => {
-                        if (data.success) {
-                            document.getElementById('status').innerHTML = '<p style="color: green;">✅ Authentication successful!</p>';
-                        } else {
-                            document.getElementById('status').innerHTML = '<p style="color: red;">❌ Authentication failed</p>';
-                        }
-                    });
-                }
-            }
-        </script>
-    </body>
-    </html>
-    ''', session_id=session_id)
+    """Legacy QR redirect - now handled by in-app scanning"""
+    return jsonify({
+        'error': 'This endpoint is deprecated. Please use the main app to scan QR codes.',
+        'message': 'QR codes should be scanned directly in the Veridium app'
+    }), 400
 
 @socketio.on('join_session')
 def handle_join_session(data):
