@@ -102,21 +102,15 @@ HTML_TEMPLATE = '''
         .success { background: rgba(76,175,80,0.2); }
         .error { background: rgba(244,67,54,0.2); }
         .loading { background: rgba(255,255,255,0.1); }
-        input, button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 6px; border: none; font-size: 16px; }
-        button { background: #4CAF50; color: white; cursor: pointer; }
+        button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 6px; border: none; font-size: 16px; background: #4CAF50; color: white; cursor: pointer; }
         button:disabled { background: #ccc; cursor: not-allowed; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🔐 Veridium Login</h1>
-        <input id="usernameInput" type="text" placeholder="Enter your username" autocomplete="username" />
+        <h1>🔐 Veridium</h1>
         <button id="loginButton">Login with Biometrics</button>
-        <div id="status" class="status info">Ready for login.</div>
-        <div id="fallback" style="display:none;">
-            <p>If your browser does not support cross-device login, <b>scan the QR code below</b> with your mobile device or use manual fallback.</p>
-            <!-- Insert your custom QR/manual fallback UI here -->
-        </div>
+        <div id="status" class="status info">Ready for passwordless login.</div>
     </div>
     <script>
     function showStatus(message, type = 'info') {
@@ -124,21 +118,13 @@ HTML_TEMPLATE = '''
         status.textContent = message;
         status.className = `status ${type}`;
     }
-    function showCustomQRLogin() {
-        document.getElementById('fallback').style.display = 'block';
-        showStatus('Fallback: Use QR/manual login below.', 'info');
-    }
-    async function startWebAuthnLogin(username) {
-        if (!username) {
-            showStatus('❌ Please enter username', 'error');
-            return;
-        }
+    async function startWebAuthnLogin() {
         showStatus('Requesting authentication options...', 'loading');
         const resp = await fetch('/api/begin_authentication', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({ username })
+            body: JSON.stringify({})
         });
         if (!resp.ok) {
             showStatus('❌ Failed to get options: ' + resp.statusText, 'error');
@@ -146,7 +132,9 @@ HTML_TEMPLATE = '''
         }
         const options = await resp.json();
         try {
-            showStatus('Prompting for biometrics or cross-device...', 'loading');
+            showStatus('Prompting for biometrics...', 'loading');
+            // allowCredentials is undefined for discoverable credentials
+            options.allowCredentials = undefined;
             const assertion = await navigator.credentials.get({ publicKey: options });
             // Convert assertion to JSON for backend
             const credential = {};
@@ -183,7 +171,6 @@ HTML_TEMPLATE = '''
             const verifyResult = await verifyResp.json();
             if (verifyResult.verified) {
                 showStatus('✅ Login successful!', 'success');
-                // Redirect or update UI as needed
                 setTimeout(() => { window.location.href = '/dashboard'; }, 1500);
             } else {
                 showStatus('❌ Login failed: ' + (verifyResult.error || 'Unknown error'), 'error');
@@ -191,15 +178,9 @@ HTML_TEMPLATE = '''
         } catch (err) {
             console.error('WebAuthn error:', err);
             showStatus('❌ WebAuthn error: ' + err.message, 'error');
-            if (err.name === 'NotSupportedError' || err.name === 'NotAllowedError') {
-                showCustomQRLogin();
-            }
         }
     }
-    document.getElementById('loginButton').addEventListener('click', () => {
-        const username = document.getElementById('usernameInput').value;
-        startWebAuthnLogin(username);
-    });
+    document.getElementById('loginButton').addEventListener('click', startWebAuthnLogin);
     </script>
 </body>
 </html>
@@ -438,109 +419,24 @@ def verify_registration():
 @app.route('/api/begin_authentication', methods=['POST'])
 def begin_authentication():
     try:
-        data = request.get_json()
-        app.logger.info(f"Begin auth request: {data}")
-
-        username = data.get('username')  # Assume frontend sends username for lookup
-        app.logger.info(f"Looking up user with username: {username}")
-
-        # List all users for debugging
-        all_users = User.query.all()
-        app.logger.info(f"All users in database: {[u.user_name for u in all_users]}")
-
-        # Fetch user and their stored credentials
-        user = User.query.filter_by(user_name=username).first()
-        if not user:
-            app.logger.warning(f"User not found for username: {username}")
-            # Log all available users for debugging
-            all_users = User.query.all()
-            available_users = [u.user_name for u in all_users]
-            app.logger.info(f"Available users: {available_users}")
-            return jsonify({
-                'error': 'User not found',
-                'verified': False,
-                'requested_username': username,
-                'available_users': available_users
-            }), 400
-
-        # Get allowed credentials (list of dicts with id as base64url)
-        allowed_credentials = []
-        app.logger.info(f"Processing {len(user.credentials)} credentials for user {username}")
-
-        for cred in user.credentials:
-            try:
-                transports = cred.transports if cred.transports else []
-                if isinstance(transports, str):
-                    try:
-                        transports = json.loads(transports)
-                    except json.JSONDecodeError:
-                        transports = []
-                if not isinstance(transports, list):
-                    transports = []
-                TRANSPORT_MAP = {
-                    "usb": AuthenticatorTransport.USB,
-                    "nfc": AuthenticatorTransport.NFC,
-                    "ble": AuthenticatorTransport.BLE,
-                    "internal": AuthenticatorTransport.INTERNAL,
-                    "cable": AuthenticatorTransport.CABLE,
-                    "hybrid": AuthenticatorTransport.HYBRID,
-                }
-                transport_enums = []
-                for transport_item in transports:
-                    if isinstance(transport_item, str):
-                        transport_enum = TRANSPORT_MAP.get(transport_item.lower())
-                        if transport_enum:
-                            transport_enums.append(transport_enum)
-                    elif isinstance(transport_item, AuthenticatorTransport):
-                        transport_enums.append(transport_item)
-                # Always include HYBRID for caBLE support
-                if AuthenticatorTransport.HYBRID not in transport_enums:
-                    transport_enums.append(AuthenticatorTransport.HYBRID)
-                descriptor = PublicKeyCredentialDescriptor(
-                    id=cred.credential_id,
-                    type=PublicKeyCredentialType.PUBLIC_KEY,
-                    transports=transport_enums if transport_enums else None
-                )
-                allowed_credentials.append(descriptor)
-            except Exception as e:
-                app.logger.error(f"Error processing credential {cred.credential_id.hex()[:8]}: {e}")
-                continue
-
+        # No username required for discoverable credentials
         # Generate challenge
         challenge = os.urandom(32)
         challenge_id = str(uuid.uuid4())
         session[f'challenge_{challenge_id}'] = challenge  # Store challenge by ID
-        app.logger.info(f"Stored challenge {challenge_id} in session")
 
-        # Generate options
-        try:
-            options = generate_authentication_options(
-                rp_id=Config.get_webauthn_rp_id(),
-                challenge=challenge,
-                timeout=60000,  # 60 seconds
-                user_verification=UserVerificationRequirement.REQUIRED,  # For biometrics
-                allow_credentials=allowed_credentials if allowed_credentials else None
-            )
-            app.logger.info(f"Successfully generated authentication options")
-        except Exception as e:
-            import traceback
-            app.logger.error(f"Error generating authentication options: {e}")
-            app.logger.error(f"Full traceback: {traceback.format_exc()}")
-            raise
-
-        # Convert to JSON-friendly (library has options_to_json helper if needed)
+        # Generate options for discoverable credentials (resident keys)
+        options = generate_authentication_options(
+            rp_id=Config.get_webauthn_rp_id(),
+            challenge=challenge,
+            timeout=60000,  # 60 seconds
+            user_verification=UserVerificationRequirement.REQUIRED,  # For biometrics
+            allow_credentials=None,  # Allow discoverable credentials
+            extensions=None
+        )
         options_json = json.loads(options_to_json(options))
-        options_json['challenge_id'] = challenge_id  # Add for frontend to send back
-
-        app.logger.info(f"Generated auth options for user {username} with {len(allowed_credentials)} credentials")
-
-        # Log the final allowed_credentials for debugging (as suggested by Grok)
-        for i, cred_desc in enumerate(allowed_credentials):
-            transport_values = [t.value for t in cred_desc.transports] if cred_desc.transports else None
-            app.logger.info(f"Credential {i}: id={cred_desc.id.hex()[:8]}..., transports={transport_values}")
-
+        options_json['challenge_id'] = challenge_id
         return jsonify(options_json), 200
-        
     except Exception as e:
         app.logger.error(f"Begin authentication error: {e}")
         return jsonify({'error': str(e), 'verified': False}), 500
