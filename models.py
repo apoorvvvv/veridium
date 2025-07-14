@@ -9,8 +9,8 @@ db = SQLAlchemy()
 class User(db.Model):
     __tablename__ = 'users'
     
-    id = db.Column(db.String(255), primary_key=True, default=lambda: str(uuid.uuid4()))
-    user_id = db.Column(db.String(255), unique=True, nullable=False)  # WebAuthn user ID
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.LargeBinary(32), unique=True, nullable=False)  # Store as bytes
     user_name = db.Column(db.String(255), nullable=False, default='veridium_user')
     display_name = db.Column(db.String(255), nullable=False, default='Veridium User')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
