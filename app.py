@@ -459,6 +459,29 @@ def home():
 def test():
     return jsonify({'status': 'ok', 'message': 'Test endpoint working'})
 
+@app.route('/api/users')
+def list_users():
+    """Debug endpoint to list all users in the database"""
+    try:
+        users = User.query.all()
+        user_list = []
+        for user in users:
+            user_data = {
+                'user_name': user.user_name,
+                'user_id': user.user_id,
+                'created_at': user.created_at.isoformat() if user.created_at else None,
+                'credentials_count': len(user.credentials)
+            }
+            user_list.append(user_data)
+        
+        return jsonify({
+            'users': user_list,
+            'total_users': len(user_list)
+        })
+    except Exception as e:
+        app.logger.error(f"Error listing users: {e}")
+        return jsonify({'error': str(e)}), 500
+
 def urlsafe_b64encode_no_padding(b: bytes) -> str:
     """Convert bytes to base64-url-safe string without padding"""
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
@@ -665,6 +688,10 @@ def begin_authentication():
         username = data.get('username')  # Assume frontend sends username for lookup
         app.logger.info(f"Looking up user with username: {username}")
         
+        # List all users for debugging
+        all_users = User.query.all()
+        app.logger.info(f"All users in database: {[u.user_name for u in all_users]}")
+        
         # Fetch user and their stored credentials
         user = User.query.filter_by(user_name=username).first()
         if not user:
@@ -673,21 +700,24 @@ def begin_authentication():
         
         # Get allowed credentials (list of dicts with id as base64url)
         allowed_credentials = []
+        app.logger.info(f"Processing {len(user.credentials)} credentials for user {username}")
+        
         for cred in user.credentials:
-            # Handle transports field - ensure it's a list with proper logging
-            transports = cred.transports if cred.transports else []
-            app.logger.info(f"Raw transports for cred_id {cred.credential_id.hex()[:8]}: {transports} (type: {type(transports)})")
-            
-            if isinstance(transports, str):
-                try:
-                    transports = json.loads(transports)
-                    app.logger.warning(f"Converted string transports to list for cred_id {cred.credential_id.hex()[:8]}: {transports}")
-                except (json.JSONDecodeError, TypeError) as e:
-                    app.logger.error(f"Invalid transports string for cred_id {cred.credential_id.hex()[:8]}: {e}")
-                    transports = []  # Fallback
-            elif not isinstance(transports, list):
-                app.logger.warning(f"Unexpected transports type {type(transports)} for cred_id {cred.credential_id.hex()[:8]}")
-                transports = []  # Extra safety for other types
+            try:
+                # Handle transports field - ensure it's a list with proper logging
+                transports = cred.transports if cred.transports else []
+                app.logger.info(f"Raw transports for cred_id {cred.credential_id.hex()[:8]}: {transports} (type: {type(transports)})")
+                
+                if isinstance(transports, str):
+                    try:
+                        transports = json.loads(transports)
+                        app.logger.warning(f"Converted string transports to list for cred_id {cred.credential_id.hex()[:8]}: {transports}")
+                    except (json.JSONDecodeError, TypeError) as e:
+                        app.logger.error(f"Invalid transports string for cred_id {cred.credential_id.hex()[:8]}: {e}")
+                        transports = []  # Fallback
+                elif not isinstance(transports, list):
+                    app.logger.warning(f"Unexpected transports type {type(transports)} for cred_id {cred.credential_id.hex()[:8]}")
+                    transports = []  # Extra safety for other types
             
             # Define a mapping for all supported transport types
             TRANSPORT_MAP = {
@@ -703,25 +733,37 @@ def begin_authentication():
             transport_enums = []
             if transports:
                 for transport_str in transports:
-                    if isinstance(transport_str, str):
-                        transport_enum = TRANSPORT_MAP.get(transport_str.lower())  # Case-insensitive for safety
-                        if transport_enum:
-                            transport_enums.append(transport_enum)
+                    try:
+                        if isinstance(transport_str, str):
+                            transport_enum = TRANSPORT_MAP.get(transport_str.lower())  # Case-insensitive for safety
+                            if transport_enum:
+                                transport_enums.append(transport_enum)
+                            else:
+                                app.logger.warning(f"Unknown transport type '{transport_str}' for cred_id {cred.credential_id.hex()[:8]} - skipping")
                         else:
-                            app.logger.warning(f"Unknown transport type '{transport_str}' for cred_id {cred.credential_id.hex()[:8]} - skipping")
-                    else:
-                        app.logger.warning(f"Invalid transport item type {type(transport_str)} for cred_id {cred.credential_id.hex()[:8]} - skipping")
+                            app.logger.warning(f"Invalid transport item type {type(transport_str)} for cred_id {cred.credential_id.hex()[:8]} - skipping")
+                    except Exception as e:
+                        app.logger.error(f"Error processing transport '{transport_str}' for cred_id {cred.credential_id.hex()[:8]}: {e}")
+                        continue
             
             app.logger.info(f"Converted transports for cred_id {cred.credential_id.hex()[:8]}: {[t.value for t in transport_enums] if transport_enums else 'None'}")
             
             # Type assertions for debugging
             assert isinstance(cred.credential_id, bytes), f"Invalid cred_id type: {type(cred.credential_id)}"
             
-            allowed_credentials.append(PublicKeyCredentialDescriptor(
-                id=cred.credential_id,  # id is bytes
-                type="public-key",
-                transports=transport_enums if transport_enums else None  # Use enum values or None
-            ))
+            try:
+                allowed_credentials.append(PublicKeyCredentialDescriptor(
+                    id=cred.credential_id,  # id is bytes
+                    type="public-key",
+                    transports=transport_enums if transport_enums else None  # Use enum values or None
+                ))
+                app.logger.info(f"Successfully created PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}")
+            except Exception as e:
+                app.logger.error(f"Error creating PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}: {e}")
+                raise
+            except Exception as e:
+                app.logger.error(f"Error processing credential {cred.credential_id.hex()[:8]}: {e}")
+                continue
         
         # Generate challenge
         challenge = os.urandom(32)
