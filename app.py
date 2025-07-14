@@ -69,6 +69,20 @@ init_security(app)
 with app.app_context():
     db.create_all()
 
+# Add teardown handler for auto-commit on successful requests
+@app.teardown_request
+def shutdown_session(exception=None):
+    if exception:
+        db.session.rollback()
+        app.logger.error(f"Request failed, rolled back session: {exception}")
+    else:
+        try:
+            db.session.commit()  # Auto-commit on successful request
+            app.logger.debug("Auto-committed session on successful request")
+        except Exception as e:
+            app.logger.error(f"Auto-commit failed: {e}")
+    db.session.remove()  # Close session
+
 # HTML template with improved UI
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
@@ -474,6 +488,10 @@ def test():
 def list_users():
     """Debug endpoint to list all users in the database"""
     try:
+        # Test database connection first
+        db.engine.connect()
+        app.logger.info("✅ Database connection successful")
+        
         users = User.query.all()
         user_list = []
         for user in users:
@@ -486,12 +504,40 @@ def list_users():
             user_list.append(user_data)
         
         return jsonify({
+            'database_connection': 'success',
             'users': user_list,
             'total_users': len(user_list)
         })
     except Exception as e:
         app.logger.error(f"Error listing users: {e}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e), 'database_connection': 'failed'}), 500
+
+@app.route('/api/db-test')
+def test_database():
+    """Test database connection and basic operations"""
+    try:
+        # Test connection
+        connection = db.engine.connect()
+        connection.close()
+        
+        # Test query
+        user_count = User.query.count()
+        cred_count = Credential.query.count()
+        
+        return jsonify({
+            'status': 'success',
+            'database_url': str(db.engine.url).replace('://', '://***:***@'),  # Hide credentials
+            'user_count': user_count,
+            'credential_count': cred_count,
+            'connection_test': 'passed'
+        })
+    except Exception as e:
+        app.logger.error(f"Database test failed: {e}")
+        return jsonify({
+            'status': 'failed',
+            'error': str(e),
+            'connection_test': 'failed'
+        }), 500
 
 def urlsafe_b64encode_no_padding(b: bytes) -> str:
     """Convert bytes to base64-url-safe string without padding"""
@@ -598,18 +644,33 @@ def verify_registration():
         )
         
         # No need for if verification.verified - success is indicated by no exception
-        # Extract and store credential data
+        # Extract and store credential data with proper transport handling
+        transports_list = credential_json.get('response', {}).get('transports', [])
+        if isinstance(transports_list, list):
+            # Store as list of strings for consistency
+            transports_json = [str(t) for t in transports_list]
+        else:
+            transports_json = []
+        
         cred = Credential(
             user_id=user.id,
             credential_id=verification.credential_id,
             public_key=verification.credential_public_key,
             sign_count=verification.sign_count,
-            transports=credential_json.get('response', {}).get('transports', [])  # Still grab from JSON
+            transports=transports_json  # Store as list of strings
         )
         db.session.add(cred)
         
         challenge.used = True
-        db.session.commit()
+        
+        # Explicit commit with error handling
+        try:
+            db.session.commit()
+            app.logger.info(f"✅ Database commit successful for user {user.user_name}")
+        except Exception as e:
+            db.session.rollback()
+            app.logger.error(f"❌ Database commit failed: {e}")
+            return jsonify({'error': f'Database error: {str(e)}', 'verified': False}), 500
         
         # Verify user was actually saved to database
         saved_user = User.query.filter_by(user_name=user.user_name).first()
@@ -617,6 +678,15 @@ def verify_registration():
             app.logger.info(f"✅ User verified in database: {saved_user.user_name} (ID: {saved_user.id})")
         else:
             app.logger.error(f"❌ User NOT found in database after commit: {user.user_name}")
+            return jsonify({'error': 'User not persisted after registration', 'verified': False}), 500
+        
+        # Verify credential was saved
+        saved_cred = Credential.query.filter_by(credential_id=verification.credential_id).first()
+        if saved_cred:
+            app.logger.info(f"✅ Credential verified in database: {saved_cred.credential_id.hex()[:8]}...")
+        else:
+            app.logger.error(f"❌ Credential NOT found in database after commit")
+            return jsonify({'error': 'Credential not persisted after registration', 'verified': False}), 500
         
         app.logger.info(f"Registration success for user {user.user_id}")
         return jsonify({
@@ -717,7 +787,16 @@ def begin_authentication():
         user = User.query.filter_by(user_name=username).first()
         if not user:
             app.logger.warning(f"User not found for username: {username}")
-            return jsonify({'error': 'User not found', 'verified': False}), 400
+            # Log all available users for debugging
+            all_users = User.query.all()
+            available_users = [u.user_name for u in all_users]
+            app.logger.info(f"Available users: {available_users}")
+            return jsonify({
+                'error': 'User not found', 
+                'verified': False,
+                'requested_username': username,
+                'available_users': available_users
+            }), 400
         
         # Get allowed credentials (list of dicts with id as base64url)
         allowed_credentials = []
@@ -725,20 +804,26 @@ def begin_authentication():
         
         for cred in user.credentials:
             try:
-                # Handle transports field - ensure it's a list with proper logging
-                transports = cred.transports if cred.transports else []
-                app.logger.info(f"Raw transports for cred_id {cred.credential_id.hex()[:8]}: {transports} (type: {type(transports)})")
-                
-                if isinstance(transports, str):
-                    try:
-                        transports = json.loads(transports)
-                        app.logger.warning(f"Converted string transports to list for cred_id {cred.credential_id.hex()[:8]}: {transports}")
-                    except (json.JSONDecodeError, TypeError) as e:
-                        app.logger.error(f"Invalid transports string for cred_id {cred.credential_id.hex()[:8]}: {e}")
-                        transports = []  # Fallback
-                elif not isinstance(transports, list):
-                    app.logger.warning(f"Unexpected transports type {type(transports)} for cred_id {cred.credential_id.hex()[:8]}")
-                    transports = []  # Extra safety for other types
+                            # Handle transports field - ensure it's a list with proper logging
+            transports = cred.transports if cred.transports else []
+            app.logger.info(f"Raw transports for cred_id {cred.credential_id.hex()[:8]}: {transports} (type: {type(transports)})")
+            
+            # Ensure transports is always a list of strings
+            if isinstance(transports, str):
+                try:
+                    transports = json.loads(transports)
+                    app.logger.warning(f"Converted string transports to list for cred_id {cred.credential_id.hex()[:8]}: {transports}")
+                except (json.JSONDecodeError, TypeError) as e:
+                    app.logger.error(f"Invalid transports string for cred_id {cred.credential_id.hex()[:8]}: {e}")
+                    transports = []  # Fallback
+            elif not isinstance(transports, list):
+                app.logger.warning(f"Unexpected transports type {type(transports)} for cred_id {cred.credential_id.hex()[:8]}")
+                transports = []  # Extra safety for other types
+            
+            # Ensure all transport items are strings
+            if transports:
+                transports = [str(t) for t in transports if t is not None]
+                app.logger.info(f"Normalized transports for cred_id {cred.credential_id.hex()[:8]}: {transports}")
             
             # Define a mapping for all supported transport types
             TRANSPORT_MAP = {
