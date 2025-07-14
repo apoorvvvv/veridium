@@ -838,12 +838,16 @@ def begin_authentication():
                 # Convert string transports to AuthenticatorTransport enum values
                 transport_enums = []
                 if transports:
+                    app.logger.info(f"Processing {len(transports)} transports: {transports}")
                     for transport_str in transports:
                         try:
+                            app.logger.info(f"Processing transport_str: '{transport_str}' (type: {type(transport_str)})")
                             if isinstance(transport_str, str):
                                 transport_enum = TRANSPORT_MAP.get(transport_str.lower())  # Case-insensitive for safety
+                                app.logger.info(f"Found transport_enum: {transport_enum} (type: {type(transport_enum)})")
                                 if transport_enum:
                                     transport_enums.append(transport_enum)
+                                    app.logger.info(f"Added transport_enum to list. Current list: {transport_enums}")
                                 else:
                                     app.logger.warning(f"Unknown transport type '{transport_str}' for cred_id {cred.credential_id.hex()[:8]} - skipping")
                             else:
@@ -854,10 +858,22 @@ def begin_authentication():
                 
                 app.logger.info(f"Converted transports for cred_id {cred.credential_id.hex()[:8]}: {[t.value for t in transport_enums] if transport_enums else 'None'}")
                 
+                # Safer logging to avoid 'value' attribute errors
+                try:
+                    transport_values = [t.value for t in transport_enums] if transport_enums else None
+                    app.logger.info(f"Converted transports for cred_id {cred.credential_id.hex()[:8]}: {transport_values}")
+                except Exception as e:
+                    app.logger.error(f"Error getting transport values: {e}")
+                    app.logger.info(f"transport_enums raw: {transport_enums}")
+                    app.logger.info(f"transport_enums types: {[type(t) for t in transport_enums] if transport_enums else 'None'}")
+                
                 # Type assertions for debugging
                 assert isinstance(cred.credential_id, bytes), f"Invalid cred_id type: {type(cred.credential_id)}"
                 
                 try:
+                    app.logger.info(f"About to create PublicKeyCredentialDescriptor with transport_enums: {transport_enums}")
+                    app.logger.info(f"transport_enums types: {[type(t) for t in transport_enums] if transport_enums else 'None'}")
+                    
                     allowed_credentials.append(PublicKeyCredentialDescriptor(
                         id=cred.credential_id,  # id is bytes
                         type="public-key",
@@ -866,6 +882,8 @@ def begin_authentication():
                     app.logger.info(f"Successfully created PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}")
                 except Exception as e:
                     app.logger.error(f"Error creating PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}: {e}")
+                    app.logger.error(f"Error type: {type(e)}")
+                    app.logger.error(f"Error details: {str(e)}")
                     raise
             except Exception as e:
                 app.logger.error(f"Error processing credential {cred.credential_id.hex()[:8]}: {e}")
