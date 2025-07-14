@@ -334,9 +334,9 @@ def begin_registration():
 
 @app.route('/api/verify_registration', methods=['POST'])
 def verify_registration():
-        data = request.get_json()
-        credential = data.get('credential')
-        challenge_id = data.get('challenge_id')
+    data = request.get_json()
+    credential = data.get('credential')
+    challenge_id = data.get('challenge_id')
     stored_challenge = session.get(f'challenge_{challenge_id}')
     stored_user_id = session.get(f'user_id_{challenge_id}')
     if not stored_challenge or not stored_user_id:
@@ -354,13 +354,13 @@ def verify_registration():
         db.session.commit()
         # Store credential linked to user
         credential_model = Credential(
-                user_id=user.id,
+            user_id=user.id,
             credential_id=verified_registration.credential_id,
             public_key=verified_registration.credential_public_key,
             sign_count=verified_registration.sign_count
         )
         db.session.add(credential_model)
-            db.session.commit()
+        db.session.commit()
         # Clean up session
         session.pop(f'challenge_{challenge_id}')
         session.pop(f'user_id_{challenge_id}')
@@ -374,12 +374,12 @@ def begin_authentication():
     challenge = os.urandom(32)
     challenge_id = str(uuid.uuid4())
     session[f'challenge_{challenge_id}'] = challenge
-        options = generate_authentication_options(
-            rp_id=Config.get_webauthn_rp_id(),
+    options = generate_authentication_options(
+        rp_id=Config.get_webauthn_rp_id(),
         challenge=challenge,
-            user_verification=UserVerificationRequirement.REQUIRED,
-            timeout=60000
-        )
+        user_verification=UserVerificationRequirement.REQUIRED,
+        timeout=60000
+    )
     options_json = json.loads(options_to_json(options))
     options_json['challenge_id'] = challenge_id
     return jsonify(options_json), 200
@@ -429,29 +429,23 @@ def verify_cross_device_auth():
         data = request.get_json()
         credential = data.get('credential')
         challenge_id = data.get('challenge_id')
-        
         # Get stored challenge
         stored_challenge_data = session.get(f'cross_device_challenge_{challenge_id}')
         if not stored_challenge_data:
             return jsonify({'success': False, 'error': 'Challenge not found'}), 400
-        
         stored_challenge = stored_challenge_data['challenge']
         session_id = stored_challenge_data['session_id']
-        
         # Parse credential
         auth_credential = parse_authentication_credential_json(credential)
-        
         # Find credential in database
         cred_id_bytes = base64url_to_bytes(credential['id'])
         db_credential = Credential.query.filter_by(credential_id=cred_id_bytes).first()
         if not db_credential:
             return jsonify({'success': False, 'error': 'Credential not found'}), 400
-        
         # Get user
         user = User.query.filter_by(id=db_credential.user_id).first()
         if not user:
             return jsonify({'success': False, 'error': 'User not found'}), 400
-        
         # Verify authentication
         verified_authentication = verify_authentication_response(
             credential=auth_credential,
@@ -462,36 +456,29 @@ def verify_cross_device_auth():
             credential_current_sign_count=db_credential.sign_count,
             require_user_verification=True
         )
-        
         # Update credential
         db_credential.sign_count = verified_authentication.new_sign_count
-            db_credential.last_used = datetime.utcnow()
-            user.last_login = datetime.utcnow()
-        
+        db_credential.last_used = datetime.utcnow()
+        user.last_login = datetime.utcnow()
         # Update cross-device session
         session_obj = CrossDeviceSession.query.filter_by(session_id=session_id).first()
         if session_obj:
             session_obj.authenticate(user.user_id)
-        
-            db.session.commit()
-            
+        db.session.commit()
         # Emit success to desktop via WebSocket
         socketio.emit('session_authenticated', {
             'session_id': session_id,
             'user_id': user.user_id,
             'user_name': user.user_name
         }, room=session_id)
-        
         # Clean up session
         session.pop(f'cross_device_challenge_{challenge_id}', None)
-        
-            return jsonify({
+        return jsonify({
             'success': True,
-                'user_id': user.user_id,
+            'user_id': user.user_id,
             'user_name': user.user_name,
             'message': 'Cross-device authentication successful'
-            })
-            
+        })
     except InvalidAuthenticationResponse as e:
         app.logger.error(f"Cross-device authentication verification failed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 400
