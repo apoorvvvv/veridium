@@ -11,7 +11,8 @@ from webauthn.helpers.structs import (
     PublicKeyCredentialType,  # Add this import
     AuthenticatorTransport,
     AttestationConveyancePreference,  # Add for "none"
-    AuthenticationCredential
+    AuthenticationCredential,
+    ResidentKeyRequirement
 )
 from webauthn.helpers.cose import COSEAlgorithmIdentifier
 import json
@@ -92,95 +93,73 @@ HTML_TEMPLATE = '''
 <head>
     <title>Veridium - Passwordless Biometric Authentication</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://unpkg.com/@simplewebauthn/browser@9.0.0/dist/bundle/index.umd.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; min-height: 100vh; margin: 0; }
-        .container { max-width: 400px; margin: 40px auto; background: rgba(0,0,0,0.2); border-radius: 16px; padding: 32px 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
-        h1 { margin-bottom: 16px; }
-        .status { margin: 20px 0; padding: 15px; border-radius: 8px; }
-        .info { background: rgba(255,255,255,0.1); }
-        .success { background: rgba(76,175,80,0.2); }
-        .error { background: rgba(244,67,54,0.2); }
-        .loading { background: rgba(255,255,255,0.1); }
-        button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 6px; border: none; font-size: 16px; background: #4CAF50; color: white; cursor: pointer; }
-        button:disabled { background: #ccc; cursor: not-allowed; }
+        body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; min-height: 100vh; margin: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        .container { background: rgba(0,0,0,0.3); border-radius: 16px; padding: 40px 32px; box-shadow: 0 8px 32px rgba(0,0,0,0.2); max-width: 400px; margin: 40px auto; }
+        h1 { margin-bottom: 24px; }
+        button { background: #4CAF50; color: white; border: none; padding: 16px 32px; border-radius: 8px; font-size: 18px; margin: 16px 0; cursor: pointer; width: 100%; transition: background 0.2s; }
+        button:hover { background: #388e3c; }
+        #status { margin: 16px 0; padding: 12px; border-radius: 6px; background: rgba(255,255,255,0.1); color: #fff; min-height: 32px; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🔐 Veridium</h1>
-        <button id="loginButton">Login with Biometrics</button>
-        <div id="status" class="status info">Ready for passwordless login.</div>
+        <div id="status">Ready for passwordless authentication.</div>
+        <button onclick="handleSignup()">Sign Up with Biometrics</button>
+        <button onclick="handleLogin()">Login with Biometrics</button>
     </div>
+    <script src="https://unpkg.com/@simplewebauthn/browser@9.0.0/dist/bundle/index.umd.js"></script>
     <script>
-    function showStatus(message, type = 'info') {
-        const status = document.getElementById('status');
-        status.textContent = message;
-        status.className = `status ${type}`;
-    }
-    async function startWebAuthnLogin() {
-        showStatus('Requesting authentication options...', 'loading');
-        const resp = await fetch('/api/begin_authentication', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({})
-        });
-        if (!resp.ok) {
-            showStatus('❌ Failed to get options: ' + resp.statusText, 'error');
-            return;
-        }
-        const options = await resp.json();
+    async function handleSignup() {
         try {
-            showStatus('Prompting for biometrics...', 'loading');
-            // allowCredentials is undefined for discoverable credentials
-            options.allowCredentials = undefined;
-            const assertion = await navigator.credentials.get({ publicKey: options });
-            // Convert assertion to JSON for backend
-            const credential = {};
-            Object.keys(assertion).forEach(k => {
-                credential[k] = assertion[k];
-            });
-            credential.id = assertion.id;
-            credential.type = assertion.type;
-            credential.rawId = btoa(String.fromCharCode(...new Uint8Array(assertion.rawId)));
-            credential.response = {};
-            Object.keys(assertion.response).forEach(k => {
-                credential.response[k] = assertion.response[k];
-            });
-            credential.response.authenticatorData = btoa(String.fromCharCode(...new Uint8Array(assertion.response.authenticatorData)));
-            credential.response.clientDataJSON = btoa(String.fromCharCode(...new Uint8Array(assertion.response.clientDataJSON)));
-            credential.response.signature = btoa(String.fromCharCode(...new Uint8Array(assertion.response.signature)));
-            if (assertion.response.userHandle) {
-                credential.response.userHandle = btoa(String.fromCharCode(...new Uint8Array(assertion.response.userHandle)));
-            }
-            // Send to backend
-            const verifyResp = await fetch('/api/verify_authentication', {
+            setStatus('Requesting registration options...');
+            const optionsResp = await fetch('/api/begin_registration', { method: 'POST' });
+            const options = await optionsResp.json();
+            setStatus('Prompting for biometrics...');
+            const credential = await SimpleWebAuthnBrowser.startRegistration(options);
+            setStatus('Verifying registration...');
+            const verifyResp = await fetch('/api/verify_registration', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({
-                    credential: credential,
-                    challenge_id: options.challenge_id
-                })
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ credential, challenge_id: options.challenge_id })
             });
-            if (!verifyResp.ok) {
-                showStatus('❌ Verification failed: ' + verifyResp.statusText, 'error');
-                return;
-            }
-            const verifyResult = await verifyResp.json();
-            if (verifyResult.verified) {
-                showStatus('✅ Login successful!', 'success');
-                setTimeout(() => { window.location.href = '/dashboard'; }, 1500);
+            const result = await verifyResp.json();
+            if (result.verified) {
+                setStatus('✅ Signup successful! You can now log in.');
             } else {
-                showStatus('❌ Login failed: ' + (verifyResult.error || 'Unknown error'), 'error');
+                setStatus('❌ Signup failed: ' + (result.error || 'Unknown error'));
             }
         } catch (err) {
-            console.error('WebAuthn error:', err);
-            showStatus('❌ WebAuthn error: ' + err.message, 'error');
+            setStatus('❌ Signup failed: ' + err.message);
         }
     }
-    document.getElementById('loginButton').addEventListener('click', startWebAuthnLogin);
+    async function handleLogin() {
+        try {
+            setStatus('Requesting authentication options...');
+            const optionsResp = await fetch('/api/begin_authentication', { method: 'POST' });
+            const options = await optionsResp.json();
+            setStatus('Prompting for biometrics...');
+            const assertion = await SimpleWebAuthnBrowser.startAuthentication(options);
+            setStatus('Verifying login...');
+            const verifyResp = await fetch('/api/verify_authentication', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ credential: assertion, challenge_id: options.challenge_id })
+            });
+            const result = await verifyResp.json();
+            if (result.verified) {
+                setStatus('✅ Login successful!');
+            } else {
+                setStatus('❌ Login failed: ' + (result.error || 'Unknown error'));
+            }
+        } catch (err) {
+            setStatus('❌ Login failed: ' + err.message);
+        }
+    }
+    function setStatus(msg) {
+        document.getElementById('status').textContent = msg;
+    }
     </script>
 </body>
 </html>
@@ -262,63 +241,36 @@ def base64url_to_bytes(s: str) -> bytes:
     return base64.urlsafe_b64decode(s)
 
 @app.route('/api/begin_registration', methods=['POST'])
-@require_rate_limit(limit=10, window=300)  # 10 registrations per 5 minutes
-@require_webauthn_security()
 def begin_registration():
     try:
-        data = request.get_json()
-        username = data.get('username', 'veridium_user')
-        display_name = data.get('displayName', 'Veridium User')
-        
-        # Create a new user
-        user = User.create_user(username, display_name)
-        app.logger.info(f"Created user: {user.user_name} with user_id: {user.user_id}")
-        
-        db.session.add(user)
-        db.session.flush()  # Get the user ID
-        app.logger.info(f"User added to session, ID: {user.id}")
-        
-        # Decode stored str to bytes for the library (should be 32 bytes)
-        import base64
-        user_id_bytes = base64.urlsafe_b64decode(user.user_id + '==')  # Add padding if needed
-        assert len(user_id_bytes) == 32, f"user_id_bytes is {len(user_id_bytes)} bytes, expected 32"
-        
-        # Generate registration options with attestation="none"
+        # Generate random user_id (32 bytes)
+        user_id_bytes = os.urandom(32)
+        # Store user_id_bytes in session for verification
+        session['pending_user_id'] = base64.urlsafe_b64encode(user_id_bytes).decode()
         options = generate_registration_options(
             rp_id=Config.get_webauthn_rp_id(),
-            rp_name=config_instance.WEBAUTHN_RP_NAME,
-            user_id=user_id_bytes,  # Pass as bytes
-            user_name=user.user_name,
-            user_display_name=user.display_name,
-            supported_pub_key_algs=[
-                COSEAlgorithmIdentifier.ECDSA_SHA_256,
-                COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256,
-            ],
-            attestation=AttestationConveyancePreference.NONE,  # Fix: Skip attestationObject requirement
+            rp_name="Veridium",
+            user_id=user_id_bytes,
+            user_name="anonymous_user",
+            user_display_name="Veridium User",
             authenticator_selection=AuthenticatorSelectionCriteria(
+                resident_key=ResidentKeyRequirement.REQUIRED,
                 user_verification=UserVerificationRequirement.REQUIRED
             ),
             timeout=60000
         )
-        
-        # Store the challenge
         challenge = Challenge.create_challenge(
             challenge_bytes=options.challenge,
             challenge_type='registration',
-            user_id=user.id
+            user_id=None  # Not yet created
         )
         db.session.add(challenge)
         db.session.commit()
-        
-        # Convert to JSON-serializable format using webauthn helper
         options_json = json.loads(options_to_json(options))
         options_json['challenge_id'] = challenge.id
-        
-        return jsonify(options_json)
-        
+        return jsonify(options_json), 200
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/verify_registration', methods=['POST'])
 @require_rate_limit(limit=10, window=300)  # 10 verifications per 5 minutes
@@ -419,27 +371,21 @@ def verify_registration():
 @app.route('/api/begin_authentication', methods=['POST'])
 def begin_authentication():
     try:
-        # No username required for discoverable credentials
-        # Generate challenge
         challenge = os.urandom(32)
         challenge_id = str(uuid.uuid4())
-        session[f'challenge_{challenge_id}'] = challenge  # Store challenge by ID
-
-        # Generate options for discoverable credentials (resident keys)
+        session[f'challenge_{challenge_id}'] = challenge
         options = generate_authentication_options(
             rp_id=Config.get_webauthn_rp_id(),
             challenge=challenge,
-            timeout=60000,  # 60 seconds
-            user_verification=UserVerificationRequirement.REQUIRED,  # For biometrics
-            allow_credentials=None,  # Allow discoverable credentials
-            extensions=None
+            user_verification=UserVerificationRequirement.REQUIRED,
+            timeout=60000
+            # No allow_credentials for discoverable credentials
         )
         options_json = json.loads(options_to_json(options))
         options_json['challenge_id'] = challenge_id
         return jsonify(options_json), 200
     except Exception as e:
-        app.logger.error(f"Begin authentication error: {e}")
-        return jsonify({'error': str(e), 'verified': False}), 500
+        return jsonify({'error': str(e)}), 500
 
 # ORIGINAL VERIFY AUTHENTICATION ENDPOINT (COMMENTED OUT FOR GROK'S VERSION)
 # @app.route('/api/verify_authentication', methods=['POST'])
