@@ -10,8 +10,7 @@ from webauthn.helpers.structs import (
     PublicKeyCredentialDescriptor,
     AuthenticatorTransport,
     AttestationConveyancePreference,  # Add for "none"
-    AuthenticationCredential,
-    UserVerification
+    AuthenticationCredential
 )
 from webauthn.helpers.cose import COSEAlgorithmIdentifier
 import json
@@ -695,7 +694,7 @@ def begin_authentication():
             rp_id=Config.get_webauthn_rp_id(),
             challenge=challenge,
             timeout=60000,  # 60 seconds
-            user_verification=UserVerification.REQUIRED,  # For biometrics
+            user_verification=UserVerificationRequirement.REQUIRED,  # For biometrics
             allow_credentials=allowed_credentials if allowed_credentials else None
         )
         
