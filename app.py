@@ -462,19 +462,7 @@ HTML_TEMPLATE = '''
                 return;
             }
 
-            // Check camera permission first
-            try {
-                const permission = await navigator.permissions.query({name: 'camera'});
-                if (permission.state === 'denied') {
-                    showStatus('❌ Camera access denied. Please enable camera in browser settings and reload the page.', 'error');
-                    return;
-                }
-            } catch (err) {
-                // Permission API not supported, continue anyway
-                console.log('Permission API not supported, proceeding with camera request');
-            }
-
-            // Show modal and start camera
+            // Show modal and start camera - let browser handle permission popup naturally
             qrModal.style.display = 'flex';
             qrStatus.textContent = 'Requesting camera access...';
 
@@ -498,7 +486,7 @@ HTML_TEMPLATE = '''
                 requestAnimationFrame(scanFrame);
             } catch (err) {
                 if (err.name === 'NotAllowedError') {
-                    qrStatus.textContent = '❌ Camera access denied. Please enable camera in browser settings.';
+                    qrStatus.textContent = '❌ Camera access denied. Please allow camera access when prompted and try again.';
                 } else if (err.name === 'NotFoundError') {
                     qrStatus.textContent = '❌ No camera found on this device.';
                 } else {
@@ -520,15 +508,21 @@ HTML_TEMPLATE = '''
 
             if (code) {
                 try {
-                    const qrData = JSON.parse(code.data);
-                    if (qrData.action === 'cross_device_auth' && qrData.session_id) {
-                        const sessionId = qrData.session_id;
-                        qrStatus.textContent = '✅ QR detected! Processing...';
-                        stopScanning();
-                        // Proceed with cross-device authentication
-                        handleCrossDeviceAuth(sessionId);
+                    // Check if it's a Veridium URL
+                    if (code.data.includes('/auth?session_id=')) {
+                        const url = new URL(code.data);
+                        const sessionId = url.searchParams.get('session_id');
+                        if (sessionId) {
+                            qrStatus.textContent = '✅ QR detected! Processing...';
+                            stopScanning();
+                            // Proceed with cross-device authentication
+                            handleCrossDeviceAuth(sessionId);
+                        } else {
+                            qrStatus.textContent = '❌ Invalid QR code format';
+                            requestAnimationFrame(scanFrame);  // Continue scanning
+                        }
                     } else {
-                        qrStatus.textContent = '❌ Invalid QR code format';
+                        qrStatus.textContent = '❌ Not a Veridium QR code';
                         requestAnimationFrame(scanFrame);  // Continue scanning
                     }
                 } catch (err) {
@@ -1265,15 +1259,12 @@ def generate_qr():
         db.session.add(session_obj)
         db.session.commit()
         
-        # Generate QR code with minimal data (just session ID and RP ID)
-        qr_data = json.dumps({
-            'session_id': session_id,
-            'rp_id': Config.get_webauthn_rp_id(),
-            'action': 'cross_device_auth'
-        })
+        # Generate QR code with a clickable URL instead of JSON data
+        # This will open the Veridium app when scanned with phone camera
+        qr_url = f"{config_instance.WEBAUTHN_RP_ORIGIN}/auth?session_id={session_id}&rp_id={Config.get_webauthn_rp_id()}"
         
         qr = qrcode.QRCode(version=1, box_size=10, border=5)
-        qr.add_data(qr_data)
+        qr.add_data(qr_url)
         qr.make(fit=True)
         
         img = qr.make_image(fill_color="black", back_color="white")
@@ -1358,6 +1349,184 @@ def authenticate_qr():
     except Exception as e:
         app.logger.error(f"QR authentication error: {e}")
         return jsonify({'success': False, 'error': str(e)})
+
+@app.route('/auth')
+def handle_qr_auth():
+    """Handle QR code URL when scanned - automatically start cross-device authentication"""
+    session_id = request.args.get('session_id')
+    rp_id = request.args.get('rp_id')
+    
+    if not session_id:
+        return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Veridium - Invalid QR Code</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+                .error { color: #d32f2f; }
+            </style>
+        </head>
+        <body>
+            <h1>🔐 Veridium</h1>
+            <p class="error">Invalid QR code. Please scan a valid Veridium QR code.</p>
+        </body>
+        </html>
+        ''')
+    
+    # Find the session
+    session_obj = CrossDeviceSession.query.filter_by(session_id=session_id).first()
+    if not session_obj or not session_obj.is_valid():
+        return render_template_string('''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Veridium - Expired QR Code</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+                body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+                .error { color: #d32f2f; }
+            </style>
+        </head>
+        <body>
+            <h1>🔐 Veridium</h1>
+            <p class="error">QR code has expired. Please generate a new one on your desktop.</p>
+        </body>
+        </html>
+        ''')
+    
+    # Return a page that automatically starts biometric authentication
+    return render_template_string('''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Veridium - Biometric Authentication</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <script src="https://unpkg.com/@simplewebauthn/browser@9.0.0/dist/bundle/index.umd.js"></script>
+        <style>
+            body { 
+                font-family: Arial, sans-serif; 
+                text-align: center; 
+                padding: 20px; 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                min-height: 100vh;
+                margin: 0;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+            }
+            .container { max-width: 400px; margin: 0 auto; }
+            .status { margin: 20px 0; padding: 15px; border-radius: 8px; }
+            .info { background: rgba(255,255,255,0.1); }
+            .success { background: rgba(76,175,80,0.2); }
+            .error { background: rgba(244,67,54,0.2); }
+            .loading { background: rgba(255,255,255,0.1); }
+            button { 
+                background: #4CAF50; 
+                color: white; 
+                border: none; 
+                padding: 12px 24px; 
+                border-radius: 6px; 
+                font-size: 16px; 
+                cursor: pointer; 
+                margin: 10px;
+            }
+            button:disabled { background: #ccc; cursor: not-allowed; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🔐 Veridium</h1>
+            <p>Complete biometric authentication to log in on your desktop</p>
+            
+            <div id="status" class="status info">
+                Preparing authentication...
+            </div>
+            
+            <button id="authButton" onclick="startAuth()" style="display: none;">
+                Start Biometric Authentication
+            </button>
+        </div>
+
+        <script>
+            const sessionId = '{{ session_id }}';
+            let authOptions = null;
+
+            async function showStatus(message, type = 'info') {
+                const status = document.getElementById('status');
+                status.textContent = message;
+                status.className = `status ${type}`;
+            }
+
+            async function startAuth() {
+                try {
+                    showStatus('Starting biometric authentication...', 'loading');
+                    document.getElementById('authButton').disabled = true;
+
+                    // Step 1: Get authentication options
+                    const authResponse = await fetch('/api/authenticate_qr', {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ session_id: sessionId })
+                    });
+                    
+                    const authResult = await authResponse.json();
+                    
+                    if (!authResult.success) {
+                        showStatus('❌ Authentication setup failed: ' + (authResult.error || 'Unknown error'), 'error');
+                        return;
+                    }
+                    
+                    authOptions = authResult.auth_options;
+                    showStatus('Please complete biometric authentication...', 'loading');
+                    
+                    // Step 2: Trigger biometric authentication
+                    const assertion = await SimpleWebAuthnBrowser.startAuthentication(authOptions);
+                    
+                    // Step 3: Verify the authentication
+                    const verifyResponse = await fetch('/api/verify_cross_device_auth', {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            credential: assertion,
+                            challenge_id: authOptions.challenge_id
+                        })
+                    });
+                    
+                    const verifyResult = await verifyResponse.json();
+                    
+                    if (verifyResult.success) {
+                        showStatus('✅ Authentication successful! Your desktop will be logged in automatically.', 'success');
+                        // Close the page after a few seconds
+                        setTimeout(() => {
+                            window.close();
+                        }, 3000);
+                    } else {
+                        showStatus('❌ Authentication failed: ' + (verifyResult.error || 'Unknown error'), 'error');
+                        document.getElementById('authButton').disabled = false;
+                    }
+                } catch (error) {
+                    console.error('Authentication error:', error);
+                    showStatus('❌ Authentication error: ' + error.message, 'error');
+                    document.getElementById('authButton').disabled = false;
+                }
+            }
+
+            // Auto-start authentication when page loads
+            window.addEventListener('load', () => {
+                setTimeout(() => {
+                    document.getElementById('authButton').style.display = 'inline-block';
+                    showStatus('Click the button below to start biometric authentication', 'info');
+                }, 1000);
+            });
+        </script>
+    </body>
+    </html>
+    ''', session_id=session_id)
 
 @app.route('/qr/<session_id>')
 def qr_redirect(session_id):
