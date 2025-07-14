@@ -218,7 +218,7 @@ HTML_TEMPLATE = '''
             // If you want to force the origin, uncomment and set below:
             // "extraHeaders": { "Origin": window.location.origin }
         });
-        let currentUser = localStorage.getItem('veridium_user_id');
+        let currentUser = localStorage.getItem('veridium_username');
         
         function showStatus(message, type = 'info') {
             const statusDiv = document.getElementById('status');
@@ -324,9 +324,13 @@ HTML_TEMPLATE = '''
                 const result = JSON.parse(verifyText);
                 
                 if (result.verified) {
-                    localStorage.setItem('veridium_user_id', result.user_id);
-                    currentUser = result.user_id;
-                    showStatus(`✅ Registration successful! User ID: ${result.user_id}`, 'success');
+                    // Store user_name instead of user_id for better UX
+                    currentUser = result.user_name;
+                    localStorage.setItem('veridium_username', currentUser);
+                    // Clean up old storage
+                    localStorage.removeItem('veridium_user_id');
+                    console.log('Registered and stored username:', currentUser);
+                    showStatus(`✅ Registration successful! Username: ${result.user_name}`, 'success');
                 } else {
                     showStatus('❌ Registration failed: ' + (result.error || 'Unknown error'), 'error');
                 }
@@ -340,10 +344,24 @@ HTML_TEMPLATE = '''
         }
         
         async function login() {
-            if (!currentUser) {
-                currentUser = prompt('Enter your User ID (from registration):');
-                if (!currentUser) return;
+            // Try to get stored username first
+            let username = localStorage.getItem('veridium_username');
+            
+            // Handle legacy stored user_id
+            const old_user_id = localStorage.getItem('veridium_user_id');
+            if (old_user_id && !username) {
+                // Migration: clean up old storage and prompt for re-registration
+                localStorage.removeItem('veridium_user_id');
+                showStatus('⚠️ Please re-register for improved login experience', 'error');
+                return;
             }
+            
+            if (!username) {
+                username = prompt('Enter your username (from registration):');
+                if (!username) return;
+            }
+            
+            currentUser = username;
             
             try {
                 showStatus('Starting authentication...', 'info');
@@ -418,7 +436,7 @@ HTML_TEMPLATE = '''
         async function scanQR() {
             const sessionId = prompt('Enter session ID from QR code (for testing):');
             if (!sessionId || !currentUser) {
-                showStatus('❌ Need session ID and user ID', 'error');
+                showStatus('❌ Need session ID and username', 'error');
                 return;
             }
             
@@ -429,7 +447,7 @@ HTML_TEMPLATE = '''
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         session_id: sessionId,
-                        user_id: currentUser
+                        user_id: currentUser  // This is now the username
                     })
                 });
                 
@@ -592,6 +610,7 @@ def verify_registration():
         return jsonify({
             'verified': True,
             'user_id': user.user_id,
+            'user_name': user.user_name,  # Add user_name to response
             'credential_id': base64.urlsafe_b64encode(verification.credential_id).decode('utf-8')
         })
             
