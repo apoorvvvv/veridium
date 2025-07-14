@@ -804,69 +804,69 @@ def begin_authentication():
         
         for cred in user.credentials:
             try:
-                            # Handle transports field - ensure it's a list with proper logging
-            transports = cred.transports if cred.transports else []
-            app.logger.info(f"Raw transports for cred_id {cred.credential_id.hex()[:8]}: {transports} (type: {type(transports)})")
-            
-            # Ensure transports is always a list of strings
-            if isinstance(transports, str):
-                try:
-                    transports = json.loads(transports)
-                    app.logger.warning(f"Converted string transports to list for cred_id {cred.credential_id.hex()[:8]}: {transports}")
-                except (json.JSONDecodeError, TypeError) as e:
-                    app.logger.error(f"Invalid transports string for cred_id {cred.credential_id.hex()[:8]}: {e}")
-                    transports = []  # Fallback
-            elif not isinstance(transports, list):
-                app.logger.warning(f"Unexpected transports type {type(transports)} for cred_id {cred.credential_id.hex()[:8]}")
-                transports = []  # Extra safety for other types
-            
-            # Ensure all transport items are strings
-            if transports:
-                transports = [str(t) for t in transports if t is not None]
-                app.logger.info(f"Normalized transports for cred_id {cred.credential_id.hex()[:8]}: {transports}")
-            
-            # Define a mapping for all supported transport types
-            TRANSPORT_MAP = {
-                "usb": AuthenticatorTransport.USB,
-                "nfc": AuthenticatorTransport.NFC,
-                "ble": AuthenticatorTransport.BLE,
-                "internal": AuthenticatorTransport.INTERNAL,
-                "cable": AuthenticatorTransport.CABLE,
-                "hybrid": AuthenticatorTransport.HYBRID,
-            }
-            
-            # Convert string transports to AuthenticatorTransport enum values
-            transport_enums = []
-            if transports:
-                for transport_str in transports:
+                # Handle transports field - ensure it's a list with proper logging
+                transports = cred.transports if cred.transports else []
+                app.logger.info(f"Raw transports for cred_id {cred.credential_id.hex()[:8]}: {transports} (type: {type(transports)})")
+                
+                # Ensure transports is always a list of strings
+                if isinstance(transports, str):
                     try:
-                        if isinstance(transport_str, str):
-                            transport_enum = TRANSPORT_MAP.get(transport_str.lower())  # Case-insensitive for safety
-                            if transport_enum:
-                                transport_enums.append(transport_enum)
+                        transports = json.loads(transports)
+                        app.logger.warning(f"Converted string transports to list for cred_id {cred.credential_id.hex()[:8]}: {transports}")
+                    except (json.JSONDecodeError, TypeError) as e:
+                        app.logger.error(f"Invalid transports string for cred_id {cred.credential_id.hex()[:8]}: {e}")
+                        transports = []  # Fallback
+                elif not isinstance(transports, list):
+                    app.logger.warning(f"Unexpected transports type {type(transports)} for cred_id {cred.credential_id.hex()[:8]}")
+                    transports = []  # Extra safety for other types
+                
+                # Ensure all transport items are strings
+                if transports:
+                    transports = [str(t) for t in transports if t is not None]
+                    app.logger.info(f"Normalized transports for cred_id {cred.credential_id.hex()[:8]}: {transports}")
+                
+                # Define a mapping for all supported transport types
+                TRANSPORT_MAP = {
+                    "usb": AuthenticatorTransport.USB,
+                    "nfc": AuthenticatorTransport.NFC,
+                    "ble": AuthenticatorTransport.BLE,
+                    "internal": AuthenticatorTransport.INTERNAL,
+                    "cable": AuthenticatorTransport.CABLE,
+                    "hybrid": AuthenticatorTransport.HYBRID,
+                }
+                
+                # Convert string transports to AuthenticatorTransport enum values
+                transport_enums = []
+                if transports:
+                    for transport_str in transports:
+                        try:
+                            if isinstance(transport_str, str):
+                                transport_enum = TRANSPORT_MAP.get(transport_str.lower())  # Case-insensitive for safety
+                                if transport_enum:
+                                    transport_enums.append(transport_enum)
+                                else:
+                                    app.logger.warning(f"Unknown transport type '{transport_str}' for cred_id {cred.credential_id.hex()[:8]} - skipping")
                             else:
-                                app.logger.warning(f"Unknown transport type '{transport_str}' for cred_id {cred.credential_id.hex()[:8]} - skipping")
-                        else:
-                            app.logger.warning(f"Invalid transport item type {type(transport_str)} for cred_id {cred.credential_id.hex()[:8]} - skipping")
-                    except Exception as e:
-                        app.logger.error(f"Error processing transport '{transport_str}' for cred_id {cred.credential_id.hex()[:8]}: {e}")
-                        continue
-            
-            app.logger.info(f"Converted transports for cred_id {cred.credential_id.hex()[:8]}: {[t.value for t in transport_enums] if transport_enums else 'None'}")
-            
-            # Type assertions for debugging
-            assert isinstance(cred.credential_id, bytes), f"Invalid cred_id type: {type(cred.credential_id)}"
-            
-            try:
-                allowed_credentials.append(PublicKeyCredentialDescriptor(
-                    id=cred.credential_id,  # id is bytes
-                    type="public-key",
-                    transports=transport_enums if transport_enums else None  # Use enum values or None
-                ))
-                app.logger.info(f"Successfully created PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}")
-            except Exception as e:
-                app.logger.error(f"Error creating PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}: {e}")
-                raise
+                                app.logger.warning(f"Invalid transport item type {type(transport_str)} for cred_id {cred.credential_id.hex()[:8]} - skipping")
+                        except Exception as e:
+                            app.logger.error(f"Error processing transport '{transport_str}' for cred_id {cred.credential_id.hex()[:8]}: {e}")
+                            continue
+                
+                app.logger.info(f"Converted transports for cred_id {cred.credential_id.hex()[:8]}: {[t.value for t in transport_enums] if transport_enums else 'None'}")
+                
+                # Type assertions for debugging
+                assert isinstance(cred.credential_id, bytes), f"Invalid cred_id type: {type(cred.credential_id)}"
+                
+                try:
+                    allowed_credentials.append(PublicKeyCredentialDescriptor(
+                        id=cred.credential_id,  # id is bytes
+                        type="public-key",
+                        transports=transport_enums if transport_enums else None  # Use enum values or None
+                    ))
+                    app.logger.info(f"Successfully created PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}")
+                except Exception as e:
+                    app.logger.error(f"Error creating PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}: {e}")
+                    raise
             except Exception as e:
                 app.logger.error(f"Error processing credential {cred.credential_id.hex()[:8]}: {e}")
                 continue
