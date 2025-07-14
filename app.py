@@ -263,16 +263,57 @@ HTML_TEMPLATE = '''
                 showStatus('Starting registration...', 'info');
                 
                 // Use debug functions to track cookies and responses
-                const options = await debugBeginRegistration({
-                    username: 'veridium_user_' + Date.now(),
-                    displayName: 'Veridium User'
+                const res = await fetch("/api/begin_registration", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        username: 'veridium_user_' + Date.now(),
+                        displayName: 'Veridium User'
+                    }),
                 });
+                
+                if (!res.ok) {
+                    const errorText = await res.text();  // Get raw error response
+                    showStatus(`❌ Registration failed: ${errorText || 'Unknown error'}`, 'error');
+                    console.error('Backend error:', errorText);
+                    return;  // Exit early to prevent further processing
+                }
+                
+                const options = await res.json();  // Only parse if OK
+                
+                // Debug dump (as before)
+                document.body.insertAdjacentHTML("beforeend", `
+                    <div style="padding:10px; border:2px solid red; margin:10px; background: #ffe6e6;">
+                        <strong>BEGIN_REG:</strong><br>
+                        status = ${res.status}<br>
+                        response = <pre>${JSON.stringify(options, null, 2)}</pre>
+                        document.cookie = "${document.cookie}"
+                    </div>
+                `);
                 
                 showStatus('Please complete biometric authentication...', 'info');
                 
                 const credential = await SimpleWebAuthnBrowser.startRegistration(options);
                 
-                const result = await debugVerifyRegistration(credential, options.challenge_id);
+                const verifyRes = await fetch("/api/verify_registration", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({credential, challenge_id: options.challenge_id}),
+                });
+                
+                const verifyText = await verifyRes.text();
+                document.body.insertAdjacentHTML("beforeend", `
+                    <div style="padding:10px; border:2px solid blue; margin:10px; background: #e6e6ff;">
+                        <strong>VERIFY_REG:</strong><br>
+                        status = ${verifyRes.status}<br>
+                        response = <pre>${verifyText}</pre>
+                        document.cookie = "${document.cookie}"
+                    </div>
+                `);
+                
+                const result = JSON.parse(verifyText);
                 
                 if (result.verified) {
                     localStorage.setItem('veridium_user_id', result.user_id);
@@ -441,11 +482,15 @@ def begin_registration():
         db.session.add(user)
         db.session.flush()  # Get the user ID
         
+        # Decode stored str to bytes for the library
+        import base64
+        user_id_bytes = base64.urlsafe_b64decode(user.user_id + '==')  # Add padding if needed
+        
         # Generate registration options with attestation="none"
         options = generate_registration_options(
             rp_id=Config.get_webauthn_rp_id(),
             rp_name=config_instance.WEBAUTHN_RP_NAME,
-            user_id=user.user_id,  # Fixed: Pass as str, library handles encoding
+            user_id=user_id_bytes,  # Pass as bytes
             user_name=user.user_name,
             user_display_name=user.display_name,
             supported_pub_key_algs=[
