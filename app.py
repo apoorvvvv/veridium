@@ -226,20 +226,21 @@ HTML_TEMPLATE = '''
             setTimeout(() => statusDiv.innerHTML = '', 5000);
         }
         
-        // Debug logging functions for session/cookie tracking
-        async function debugBeginRegistration(payload) {
-            const res = await fetch("/api/begin_registration", {
+        // Debug logging functions for authentication tracking
+        async function debugBeginAuthentication(payload) {
+            const res = await fetch("/api/begin_authentication", {
                 method: "POST",
-                credentials: "include",        // ← must send/receive cookies
+                credentials: "include",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify(payload),
             });
             const text = await res.text();
             // Dump status, body, and current cookies into the DOM
             document.body.insertAdjacentHTML("beforeend", `
-                <div style="padding:10px; border:2px solid red; margin:10px; background: #ffe6e6;">
-                    <strong>BEGIN_REG:</strong><br>
+                <div style="padding:10px; border:2px solid orange; margin:10px; background: #fff3e6;">
+                    <strong>BEGIN_AUTH:</strong><br>
                     status = ${res.status}<br>
+                    request = <pre>${JSON.stringify(payload, null, 2)}</pre>
                     response = <pre>${text}</pre>
                     document.cookie = "${document.cookie}"
                 </div>
@@ -247,8 +248,8 @@ HTML_TEMPLATE = '''
             return JSON.parse(text);
         }
 
-        async function debugVerifyRegistration(credential, challengeId) {
-            const res = await fetch("/api/verify_registration", {
+        async function debugVerifyAuthentication(credential, challengeId) {
+            const res = await fetch("/api/verify_authentication", {
                 method: "POST",
                 credentials: "include",
                 headers: {"Content-Type": "application/json"},
@@ -256,9 +257,10 @@ HTML_TEMPLATE = '''
             });
             const text = await res.text();
             document.body.insertAdjacentHTML("beforeend", `
-                <div style="padding:10px; border:2px solid blue; margin:10px; background: #e6e6ff;">
-                    <strong>VERIFY_REG:</strong><br>
+                <div style="padding:10px; border:2px solid green; margin:10px; background: #e6ffe6;">
+                    <strong>VERIFY_AUTH:</strong><br>
                     status = ${res.status}<br>
+                    challenge_id = ${challengeId}<br>
                     response = <pre>${text}</pre>
                     document.cookie = "${document.cookie}"
                 </div>
@@ -270,7 +272,6 @@ HTML_TEMPLATE = '''
             try {
                 showStatus('Starting registration...', 'info');
                 
-                // Use debug functions to track cookies and responses
                 const res = await fetch("/api/begin_registration", {
                     method: "POST",
                     credentials: "include",
@@ -282,24 +283,13 @@ HTML_TEMPLATE = '''
                 });
                 
                 if (!res.ok) {
-                    const errorText = await res.text();  // Get raw error response
+                    const errorText = await res.text();
                     showStatus(`❌ Registration failed: ${errorText || 'Unknown error'}`, 'error');
                     console.error('Backend error:', errorText);
-                    return;  // Exit early to prevent further processing
+                    return;
                 }
                 
-                const options = await res.json();  // Only parse if OK
-                
-                // Debug dump (as before)
-                document.body.insertAdjacentHTML("beforeend", `
-                    <div style="padding:10px; border:2px solid red; margin:10px; background: #ffe6e6;">
-                        <strong>BEGIN_REG:</strong><br>
-                        status = ${res.status}<br>
-                        response = <pre>${JSON.stringify(options, null, 2)}</pre>
-                        document.cookie = "${document.cookie}"
-                    </div>
-                `);
-                
+                const options = await res.json();
                 showStatus('Please complete biometric authentication...', 'info');
                 
                 const credential = await SimpleWebAuthnBrowser.startRegistration(options);
@@ -311,17 +301,7 @@ HTML_TEMPLATE = '''
                     body: JSON.stringify({credential, challenge_id: options.challenge_id}),
                 });
                 
-                const verifyText = await verifyRes.text();
-                document.body.insertAdjacentHTML("beforeend", `
-                    <div style="padding:10px; border:2px solid blue; margin:10px; background: #e6e6ff;">
-                        <strong>VERIFY_REG:</strong><br>
-                        status = ${verifyRes.status}<br>
-                        response = <pre>${verifyText}</pre>
-                        document.cookie = "${document.cookie}"
-                    </div>
-                `);
-                
-                const result = JSON.parse(verifyText);
+                const result = await verifyRes.json();
                 
                 if (result.verified) {
                     // Store user_name instead of user_id for better UX
@@ -366,32 +346,20 @@ HTML_TEMPLATE = '''
             try {
                 showStatus('Starting authentication...', 'info');
                 
-                const optionsResp = await fetch('/api/begin_authentication', {
-                    method: 'POST',
-                    credentials: 'include', // <-- send/receive cookies
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username: currentUser})
-                });
+                // Use debug function for begin_authentication
+                const options = await debugBeginAuthentication({username: currentUser});
                 
-                if (!optionsResp.ok) throw new Error('Authentication setup failed');
+                if (!options || options.error) {
+                    showStatus(`❌ Authentication setup failed: ${options?.error || 'Unknown error'}`, 'error');
+                    return;
+                }
                 
-                const options = await optionsResp.json();
-                console.log('Options received:', options);
                 showStatus('Please complete biometric authentication...', 'info');
                 
                 const assertion = await SimpleWebAuthnBrowser.startAuthentication(options);
                 
-                const verifyResp = await fetch('/api/verify_authentication', {
-                    method: 'POST',
-                    credentials: 'include', // <-- send/receive cookies
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        credential: assertion,
-                        challenge_id: options.challenge_id
-                    })
-                });
-                
-                const result = await verifyResp.json();
+                // Use debug function for verify_authentication
+                const result = await debugVerifyAuthentication(assertion, options.challenge_id);
                 
                 if (result.verified) {
                     showStatus('✅ Authentication successful!', 'success');
