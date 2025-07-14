@@ -9,13 +9,17 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
     PublicKeyCredentialDescriptor,
     AuthenticatorTransport,
-    AttestationConveyancePreference  # Add for "none"
+    AttestationConveyancePreference,  # Add for "none"
+    AuthenticationCredential,
+    UserVerification
 )
 from webauthn.helpers.cose import COSEAlgorithmIdentifier
 import json
 import base64
 import qrcode
 import io
+import os
+import uuid
 from datetime import datetime
 import secrets
 from collections import namedtuple
@@ -469,6 +473,14 @@ def urlsafe_b64encode_no_padding(b: bytes) -> str:
     """Convert bytes to base64-url-safe string without padding"""
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
 
+def base64url_to_bytes(s: str) -> bytes:
+    """Convert base64url string to bytes, handling padding"""
+    # Add padding if needed
+    padding = 4 - len(s) % 4
+    if padding != 4:
+        s += '=' * padding
+    return base64.urlsafe_b64decode(s)
+
 @app.route('/api/begin_registration', methods=['POST'])
 @require_rate_limit(limit=10, window=300)  # 10 registrations per 5 minutes
 @require_webauthn_security()
@@ -588,133 +600,241 @@ def verify_registration():
         app.logger.error(f"Unexpected error: {e}")
         return jsonify({'error': str(e), 'verified': False}), 500
 
+# ORIGINAL AUTHENTICATION ENDPOINT (COMMENTED OUT FOR GROK'S VERSION)
+# @app.route('/api/begin_authentication', methods=['POST'])
+# @require_rate_limit(limit=20, window=300)  # 20 auth attempts per 5 minutes
+# @require_webauthn_security()
+# def begin_authentication():
+#     print("[BEGIN_AUTH] incoming cookies:", request.cookies)
+#     print("[BEGIN_AUTH] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
+#     try:
+#         data = request.get_json()
+#         user_id = data.get('user_id')
+#         
+#         # Find user and their credentials
+#         user = User.query.filter_by(user_id=user_id).first()
+#         if not user:
+#             return jsonify({'error': 'User not found'}), 404
+#         
+#         credentials = user.credentials
+#         if not credentials:
+#             return jsonify({'error': 'No credentials found for user'}), 404
+#         
+#         # Create allowed credentials list
+#         allowed_credentials = []
+#         for cred in credentials:
+#             allowed_credentials.append(PublicKeyCredentialDescriptor(
+#                 id=cred.credential_id,
+#                 type="public-key",
+#                 transports=cred.transports or []
+#             ))
+#         
+#         # Generate authentication options
+#         options = generate_authentication_options(
+#             rp_id=Config.get_webauthn_rp_id(),
+#             allow_credentials=allowed_credentials,
+#             user_verification=UserVerificationRequirement.REQUIRED,
+#             timeout=60000
+#         )
+#         
+#         # Store the challenge
+#         challenge = Challenge.create_challenge(
+#             challenge_bytes=options.challenge,
+#             challenge_type='authentication',
+#             user_id=user.id
+#         )
+#         db.session.add(challenge)
+#         db.session.commit()
+#         
+#         # Use the library helper to produce a fully JSON-serializable dict
+#         # 1) Dump out the raw JSON string the helper produced
+#         raw_json = options_to_json(options)
+#         print("[DEBUG] options_to_json raw output (first 200 chars):", repr(raw_json)[:200])
+#         
+#         # 2) Load into a dict and print each top-level value's type
+#         opts_json = json.loads(raw_json)
+#         print("[DEBUG] opts_json types:", {k: type(v).__name__ for k,v in opts_json.items()})
+#         
+#         # Inject your DB challenge ID so your front end can pass it back
+#         opts_json["challenge_id"] = challenge.id
+#         
+#         return jsonify(opts_json)
+#         
+#     except Exception as e:
+#         db.session.rollback()
+#         return jsonify({'error': str(e)}), 400
+
+# GROK'S IMPLEMENTATION - BEGIN AUTHENTICATION
 @app.route('/api/begin_authentication', methods=['POST'])
-@require_rate_limit(limit=20, window=300)  # 20 auth attempts per 5 minutes
-@require_webauthn_security()
 def begin_authentication():
-    print("[BEGIN_AUTH] incoming cookies:", request.cookies)
-    print("[BEGIN_AUTH] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
     try:
         data = request.get_json()
-        user_id = data.get('user_id')
+        username = data.get('username')  # Assume frontend sends username for lookup
         
-        # Find user and their credentials
-        user = User.query.filter_by(user_id=user_id).first()
+        # Fetch user and their stored credentials
+        user = User.query.filter_by(user_name=username).first()
         if not user:
-            return jsonify({'error': 'User not found'}), 404
+            return jsonify({'error': 'User not found', 'verified': False}), 400
         
-        credentials = user.credentials
-        if not credentials:
-            return jsonify({'error': 'No credentials found for user'}), 404
-        
-        # Create allowed credentials list
+        # Get allowed credentials (list of dicts with id as base64url)
         allowed_credentials = []
-        for cred in credentials:
+        for cred in user.credentials:
             allowed_credentials.append(PublicKeyCredentialDescriptor(
-                id=cred.credential_id,
+                id=cred.credential_id,  # id is bytes
                 type="public-key",
                 transports=cred.transports or []
             ))
         
-        # Generate authentication options
+        # Generate challenge
+        challenge = os.urandom(32)
+        challenge_id = str(uuid.uuid4())
+        session[f'challenge_{challenge_id}'] = challenge  # Store challenge by ID
+        
+        # Generate options
         options = generate_authentication_options(
             rp_id=Config.get_webauthn_rp_id(),
-            allow_credentials=allowed_credentials,
-            user_verification=UserVerificationRequirement.REQUIRED,
-            timeout=60000
+            challenge=challenge,
+            timeout=60000,  # 60 seconds
+            user_verification=UserVerification.REQUIRED,  # For biometrics
+            allow_credentials=allowed_credentials if allowed_credentials else None
         )
         
-        # Store the challenge
-        challenge = Challenge.create_challenge(
-            challenge_bytes=options.challenge,
-            challenge_type='authentication',
-            user_id=user.id
-        )
-        db.session.add(challenge)
-        db.session.commit()
+        # Convert to JSON-friendly (library has options_to_json helper if needed)
+        options_json = json.loads(options_to_json(options))
+        options_json['challenge_id'] = challenge_id  # Add for frontend to send back
         
-        # Use the library helper to produce a fully JSON-serializable dict
-        # 1) Dump out the raw JSON string the helper produced
-        raw_json = options_to_json(options)
-        print("[DEBUG] options_to_json raw output (first 200 chars):", repr(raw_json)[:200])
-        
-        # 2) Load into a dict and print each top-level value's type
-        opts_json = json.loads(raw_json)
-        print("[DEBUG] opts_json types:", {k: type(v).__name__ for k,v in opts_json.items()})
-        
-        # Inject your DB challenge ID so your front end can pass it back
-        opts_json["challenge_id"] = challenge.id
-        
-        return jsonify(opts_json)
-        
+        return jsonify(options_json), 200
+    
     except Exception as e:
-        db.session.rollback()
-        return jsonify({'error': str(e)}), 400
+        app.logger.error(f"Begin authentication error: {e}")
+        return jsonify({'error': str(e), 'verified': False}), 500
 
+# ORIGINAL VERIFY AUTHENTICATION ENDPOINT (COMMENTED OUT FOR GROK'S VERSION)
+# @app.route('/api/verify_authentication', methods=['POST'])
+# @require_rate_limit(limit=20, window=300)  # 20 verifications per 5 minutes
+# @require_webauthn_security()
+# def verify_authentication():
+#     print("[VERIFY_AUTH] incoming cookies:", request.cookies)
+#     print("[VERIFY_AUTH] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
+#     try:
+#         data = request.get_json()
+#         credential_json = data.get('credential')
+#         user_id = data.get('user_id')
+#         challenge_id = data.get('challenge_id')
+#         
+#         # Get and validate challenge
+#         challenge = Challenge.query.filter_by(id=challenge_id).first()
+#         if not challenge or not challenge.is_valid():
+#             app.logger.error(f"Invalid challenge ID {challenge_id}")
+#             return jsonify({'verified': False, 'error': 'Invalid or expired challenge'})
+#         
+#         # Get user and credential
+#         user = User.query.filter_by(user_id=user_id).first()
+#         if not user:
+#             app.logger.error(f"User not found for challenge {challenge_id}")
+#             return jsonify({'verified': False, 'error': 'User not found'})
+#         
+#         credential_id = base64.urlsafe_b64decode(credential_json.get('id', ''))
+#         db_credential = Credential.query.filter_by(credential_id=credential_id).first()
+#         if not db_credential:
+#             app.logger.error(f"Credential not found for user {user.user_id}")
+#             return jsonify({'verified': False, 'error': 'Credential not found'})
+#         
+#         # Parse the JSON dict to the required struct (handles base64 decoding internally)
+#         credential = parse_authentication_credential_json(credential_json)
+#         
+#         # Verify the authentication - success if no exception
+#         verification = verify_authentication_response(
+#             credential=credential,
+#             expected_challenge=challenge.challenge,  # Pass as bytes
+#             expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
+#             expected_rp_id=Config.get_webauthn_rp_id(),
+#             credential_public_key=db_credential.public_key,
+#             credential_current_sign_count=db_credential.sign_count,
+#             require_user_verification=True
+#         )
+#         
+#         # No need for if verification.verified - success is indicated by no exception
+#         db_credential.sign_count = verification.new_sign_count
+#         db_credential.last_used = datetime.utcnow()
+#         user.last_login = datetime.utcnow()
+#         challenge.used = True
+#         db.session.commit()
+#         
+#         app.logger.info(f"Authentication success for user {user.user_id}")
+#         return jsonify({
+#             'verified': True,
+#             'user_id': user.user_id,
+#             'last_login': user.last_login.isoformat()
+#         })
+#             
+#     except InvalidAuthenticationResponse as e:
+#         db.session.rollback()
+#         app.logger.error(f"Authentication verification failed: {e}")
+#         return jsonify({'error': str(e), 'verified': False}), 400
+#     except Exception as e:
+#         db.session.rollback()
+#         app.logger.error(f"Unexpected error: {e}")
+#         return jsonify({'error': str(e), 'verified': False}), 500
+
+# GROK'S IMPLEMENTATION - VERIFY AUTHENTICATION
 @app.route('/api/verify_authentication', methods=['POST'])
-@require_rate_limit(limit=20, window=300)  # 20 verifications per 5 minutes
-@require_webauthn_security()
 def verify_authentication():
-    print("[VERIFY_AUTH] incoming cookies:", request.cookies)
-    print("[VERIFY_AUTH] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
     try:
         data = request.get_json()
-        credential_json = data.get('credential')
-        user_id = data.get('user_id')
+        credential = data.get('credential')  # From SimpleWebAuthn startAuthentication
         challenge_id = data.get('challenge_id')
         
-        # Get and validate challenge
-        challenge = Challenge.query.filter_by(id=challenge_id).first()
-        if not challenge or not challenge.is_valid():
-            app.logger.error(f"Invalid challenge ID {challenge_id}")
-            return jsonify({'verified': False, 'error': 'Invalid or expired challenge'})
+        # Get stored challenge
+        stored_challenge = session.get(f'challenge_{challenge_id}')
+        if not stored_challenge:
+            return jsonify({'error': 'Challenge not found', 'verified': False}), 400
         
-        # Get user and credential
-        user = User.query.filter_by(user_id=user_id).first()
-        if not user:
-            app.logger.error(f"User not found for challenge {challenge_id}")
-            return jsonify({'verified': False, 'error': 'User not found'})
+        # Parse credential JSON to struct (use library helper if available)
+        auth_credential = parse_authentication_credential_json(credential)
         
-        credential_id = base64.urlsafe_b64decode(credential_json.get('id', ''))
-        db_credential = Credential.query.filter_by(credential_id=credential_id).first()
+        # Fetch stored credential data for this cred_id (decode id from base64url)
+        cred_id_bytes = base64url_to_bytes(credential['id'])
+        db_credential = Credential.query.filter_by(credential_id=cred_id_bytes).first()
         if not db_credential:
-            app.logger.error(f"Credential not found for user {user.user_id}")
-            return jsonify({'verified': False, 'error': 'Credential not found'})
+            return jsonify({'error': 'Credential not found', 'verified': False}), 400
         
-        # Parse the JSON dict to the required struct (handles base64 decoding internally)
-        credential = parse_authentication_credential_json(credential_json)
+        # Get user
+        user = User.query.filter_by(id=db_credential.user_id).first()
+        if not user:
+            return jsonify({'error': 'User not found', 'verified': False}), 400
         
-        # Verify the authentication - success if no exception
-        verification = verify_authentication_response(
-            credential=credential,
-            expected_challenge=challenge.challenge,  # Pass as bytes
-            expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
+        # Verify - success if no exception
+        verified_authentication = verify_authentication_response(
+            credential=auth_credential,
+            expected_challenge=stored_challenge,
             expected_rp_id=Config.get_webauthn_rp_id(),
-            credential_public_key=db_credential.public_key,
-            credential_current_sign_count=db_credential.sign_count,
-            require_user_verification=True
+            expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
+            credential_public_key=db_credential.public_key,  # bytes
+            credential_current_sign_count=db_credential.sign_count,  # int
+            require_user_verification=True  # Matches options
         )
         
-        # No need for if verification.verified - success is indicated by no exception
-        db_credential.sign_count = verification.new_sign_count
+        # Extract and update
+        new_sign_count = verified_authentication.new_sign_count
+        db_credential.sign_count = new_sign_count  # Update in DB to prevent replays
         db_credential.last_used = datetime.utcnow()
         user.last_login = datetime.utcnow()
-        challenge.used = True
         db.session.commit()
         
-        app.logger.info(f"Authentication success for user {user.user_id}")
+        # Optional: Get user_handle (user_id bytes) for confirmation
+        user_id = verified_authentication.user_handle
+        
+        # Success response
         return jsonify({
-            'verified': True,
-            'user_id': user.user_id,
-            'last_login': user.last_login.isoformat()
-        })
-            
+            'verified': True, 
+            'user_id': base64.urlsafe_b64encode(user_id).decode('utf-8').rstrip('=') if user_id else user.user_id
+        }), 200
+    
     except InvalidAuthenticationResponse as e:
-        db.session.rollback()
         app.logger.error(f"Authentication verification failed: {e}")
         return jsonify({'error': str(e), 'verified': False}), 400
     except Exception as e:
-        db.session.rollback()
         app.logger.error(f"Unexpected error: {e}")
         return jsonify({'error': str(e), 'verified': False}), 500
 
