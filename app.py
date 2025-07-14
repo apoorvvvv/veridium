@@ -529,7 +529,7 @@ def verify_registration():
             'client_data_json', 'attestation_object', 'authenticator_data',
             'signature', 'user_handle', 'transports'
         ])
-        response = WebAuthnResponse(
+        response_struct = WebAuthnResponse(
             client_data_json=response_dict.get('clientDataJSON'),
             attestation_object=response_dict.get('attestationObject'),
             authenticator_data=response_dict.get('authenticatorData'),
@@ -537,9 +537,9 @@ def verify_registration():
             user_handle=response_dict.get('userHandle'),
             transports=response_dict.get('transports', [])
         )
-        credential['response'] = response  # Replace dict with struct
-        app.logger.info(f"Converted response to snake_case struct: {response}")
-        app.logger.info(f"Response type after conversion: {type(response)}")
+        credential['response'] = response_struct  # Replace dict with struct
+        app.logger.info(f"Converted response to snake_case struct: {response_struct}")
+        app.logger.info(f"Response type after conversion: {type(response_struct)}")
         
         # Convert challenge to base64 str if bytes
         expected_challenge = challenge.challenge
