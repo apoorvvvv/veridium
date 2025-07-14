@@ -706,10 +706,18 @@ def begin_authentication():
         # Get allowed credentials (list of dicts with id as base64url)
         allowed_credentials = []
         for cred in user.credentials:
+            # Handle transports field - ensure it's a list
+            transports = cred.transports if cred.transports else []
+            if isinstance(transports, str):
+                try:
+                    transports = json.loads(transports)
+                except (json.JSONDecodeError, TypeError):
+                    transports = []
+            
             allowed_credentials.append(PublicKeyCredentialDescriptor(
                 id=cred.credential_id,  # id is bytes
                 type="public-key",
-                transports=cred.transports or []
+                transports=transports
             ))
         
         # Generate challenge
