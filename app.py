@@ -918,8 +918,8 @@ def begin_authentication():
 
         # Generate options
         try:
-        options = generate_authentication_options(
-            rp_id=Config.get_webauthn_rp_id(),
+            options = generate_authentication_options(
+                rp_id=Config.get_webauthn_rp_id(),
                 challenge=challenge,
                 timeout=60000,  # 60 seconds
                 user_verification=UserVerificationRequirement.REQUIRED,  # For biometrics
@@ -1066,10 +1066,10 @@ def verify_authentication():
         # Extract and update
         new_sign_count = verified_authentication.new_sign_count
         db_credential.sign_count = new_sign_count  # Update in DB to prevent replays
-            db_credential.last_used = datetime.utcnow()
-            user.last_login = datetime.utcnow()
-            db.session.commit()
-            
+        db_credential.last_used = datetime.utcnow()
+        user.last_login = datetime.utcnow()
+        db.session.commit()
+        
         # Optional: Get user_handle (user_id bytes) for confirmation from the input credential
         user_handle = auth_credential.response.user_handle  # bytes or None
         
@@ -1092,8 +1092,8 @@ def verify_authentication():
             user_id = user.user_id if isinstance(user.user_id, bytes) else base64.urlsafe_b64decode(user.user_id + '==')
         
         # Success response
-            return jsonify({
-                'verified': True,
+        return jsonify({
+            'verified': True,
             'user_id': base64.urlsafe_b64encode(user_id).decode('utf-8').rstrip('=') if user_id else None
         }), 200
     
