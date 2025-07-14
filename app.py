@@ -708,10 +708,12 @@ def begin_authentication():
         for cred in user.credentials:
             # Handle transports field - ensure it's a list with proper logging
             transports = cred.transports if cred.transports else []
+            app.logger.info(f"Raw transports for cred_id {cred.credential_id.hex()[:8]}: {transports} (type: {type(transports)})")
+            
             if isinstance(transports, str):
                 try:
                     transports = json.loads(transports)
-                    app.logger.warning(f"Converted string transports to list for cred_id {cred.credential_id.hex()[:8]}")
+                    app.logger.warning(f"Converted string transports to list for cred_id {cred.credential_id.hex()[:8]}: {transports}")
                 except (json.JSONDecodeError, TypeError) as e:
                     app.logger.error(f"Invalid transports string for cred_id {cred.credential_id.hex()[:8]}: {e}")
                     transports = []  # Fallback
@@ -719,13 +721,33 @@ def begin_authentication():
                 app.logger.warning(f"Unexpected transports type {type(transports)} for cred_id {cred.credential_id.hex()[:8]}")
                 transports = []  # Extra safety for other types
             
+            # Convert string transports to AuthenticatorTransport enum values
+            transport_enums = []
+            if transports:
+                for transport_str in transports:
+                    try:
+                        if transport_str == "usb":
+                            transport_enums.append(AuthenticatorTransport.USB)
+                        elif transport_str == "nfc":
+                            transport_enums.append(AuthenticatorTransport.NFC)
+                        elif transport_str == "ble":
+                            transport_enums.append(AuthenticatorTransport.BLE)
+                        elif transport_str == "internal":
+                            transport_enums.append(AuthenticatorTransport.INTERNAL)
+                        else:
+                            app.logger.warning(f"Unknown transport type: {transport_str}")
+                    except Exception as e:
+                        app.logger.error(f"Error converting transport {transport_str}: {e}")
+            
+            app.logger.info(f"Converted transports for cred_id {cred.credential_id.hex()[:8]}: {[t.value for t in transport_enums] if transport_enums else 'None'}")
+            
             # Type assertions for debugging
             assert isinstance(cred.credential_id, bytes), f"Invalid cred_id type: {type(cred.credential_id)}"
             
             allowed_credentials.append(PublicKeyCredentialDescriptor(
                 id=cred.credential_id,  # id is bytes
                 type="public-key",
-                transports=transports if transports else None  # None is better than empty list per spec
+                transports=transport_enums if transport_enums else None  # Use enum values or None
             ))
         
         # Generate challenge
