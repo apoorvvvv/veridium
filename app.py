@@ -88,540 +88,118 @@ def shutdown_session(exception=None):
 # HTML template with improved UI
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Veridium - Biometric Authentication</title>
+    <title>Veridium - Passwordless Biometric Authentication</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script src="https://unpkg.com/@simplewebauthn/browser@9.0.0/dist/bundle/index.umd.js"></script>
     <style>
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 800px; 
-            margin: 0 auto; 
-            padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            color: white;
-        }
-        .container {
-            background: rgba(255, 255, 255, 0.1);
-            padding: 30px;
-            border-radius: 15px;
-            backdrop-filter: blur(10px);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-        }
-        h1 { 
-            text-align: center; 
-            font-size: 2.5em; 
-            margin-bottom: 30px;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-        }
-        .subtitle {
-            text-align: center;
-            font-size: 1.2em;
-            margin-bottom: 40px;
-            opacity: 0.9;
-        }
-        button { 
-            background: linear-gradient(45deg, #FF6B6B, #FF8E8E);
-            color: white; 
-            border: none; 
-            padding: 15px 30px; 
-            font-size: 16px; 
-            border-radius: 25px;
-            cursor: pointer; 
-            margin: 10px;
-            width: 200px;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);
-        }
-        button:hover { 
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
-        }
-        button:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-            transform: none;
-        }
-        .button-group {
-            text-align: center;
-            margin: 30px 0;
-        }
-        .section {
-            margin: 30px 0;
-            padding: 20px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-        }
-        .user-info {
-            background: rgba(0, 255, 0, 0.1);
-            padding: 15px;
-            border-radius: 8px;
-            margin: 10px 0;
-        }
-        .error {
-            background: rgba(255, 0, 0, 0.2);
-            padding: 15px;
-            border-radius: 8px;
-            margin: 10px 0;
-        }
-        .success {
-            background: rgba(0, 255, 0, 0.2);
-            padding: 15px;
-            border-radius: 8px;
-            margin: 10px 0;
-        }
-        .qr-section {
-            text-align: center;
-            margin: 20px 0;
-        }
-        #qr-code {
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            display: inline-block;
-            margin: 20px;
-        }
-        .device-info {
-            font-size: 0.9em;
-            opacity: 0.8;
-            margin-top: 20px;
-        }
+        body { font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; min-height: 100vh; margin: 0; }
+        .container { max-width: 400px; margin: 40px auto; background: rgba(0,0,0,0.2); border-radius: 16px; padding: 32px 24px; box-shadow: 0 8px 32px rgba(0,0,0,0.2); }
+        h1 { margin-bottom: 16px; }
+        .status { margin: 20px 0; padding: 15px; border-radius: 8px; }
+        .info { background: rgba(255,255,255,0.1); }
+        .success { background: rgba(76,175,80,0.2); }
+        .error { background: rgba(244,67,54,0.2); }
+        .loading { background: rgba(255,255,255,0.1); }
+        input, button { width: 100%; padding: 12px; margin: 8px 0; border-radius: 6px; border: none; font-size: 16px; }
+        button { background: #4CAF50; color: white; cursor: pointer; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🔐 Veridium</h1>
-        <p class="subtitle">Passwordless Biometric Authentication</p>
-        
-        <div class="section">
-            <h3>📱 Mobile Authentication</h3>
-            <div class="button-group">
-                <button onclick="register()">Sign Up with Biometrics</button>
-                <button onclick="login()">Login with Biometrics</button>
-            </div>
-        </div>
-        
-        <div class="section">
-            <h3>🖥️ Desktop Cross-Device</h3>
-            <div class="button-group">
-                <button onclick="generateQR()">Generate QR for Login</button>
-                <button onclick="scanQR()">Scan QR (Mobile)</button>
-            </div>
-            <div class="qr-section" id="qr-section" style="display: none;">
-                <div id="qr-code"></div>
-                <p>Scan this QR code with your mobile device</p>
-            </div>
-        </div>
-        
-        <div id="status"></div>
-        
-        <div class="device-info">
-            <p><strong>Device Support:</strong></p>
-            <p>• iOS: Face ID, Touch ID (Safari)</p>
-            <p>• Android: Fingerprint, Face Unlock (Chrome)</p>
-            <p>• Desktop: Cross-device via QR code</p>
-        </div>
-        
-        <!-- Camera Modal Overlay -->
-        <div id="qrModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; flex-direction: column; align-items: center; justify-content: center;">
-            <video id="qrVideo" style="width: 80%; max-width: 400px; background: black;"></video>
-            <canvas id="qrCanvas" style="display: none;"></canvas>
-            <button onclick="closeQRModal()" style="margin-top: 10px; padding: 10px;">Cancel</button>
-            <p id="qrStatus" style="color: white; margin-top: 10px;"></p>
+        <h1>🔐 Veridium Login</h1>
+        <input id="usernameInput" type="text" placeholder="Enter your username" autocomplete="username" />
+        <button id="loginButton">Login with Biometrics</button>
+        <div id="status" class="status info">Ready for login.</div>
+        <div id="fallback" style="display:none;">
+            <p>If your browser does not support cross-device login, <b>scan the QR code below</b> with your mobile device or use manual fallback.</p>
+            <!-- Insert your custom QR/manual fallback UI here -->
         </div>
     </div>
-
-    <script src="https://unpkg.com/@simplewebauthn/browser@9/dist/bundle/index.umd.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <script>
-        // Explicitly set withCredentials and origin for Socket.IO
-        const socket = io({
-            withCredentials: true,
-            // If you want to force the origin, uncomment and set below:
-            // "extraHeaders": { "Origin": window.location.origin }
+    function showStatus(message, type = 'info') {
+        const status = document.getElementById('status');
+        status.textContent = message;
+        status.className = `status ${type}`;
+    }
+    function showCustomQRLogin() {
+        document.getElementById('fallback').style.display = 'block';
+        showStatus('Fallback: Use QR/manual login below.', 'info');
+    }
+    async function startWebAuthnLogin(username) {
+        if (!username) {
+            showStatus('❌ Please enter username', 'error');
+            return;
+        }
+        showStatus('Requesting authentication options...', 'loading');
+        const resp = await fetch('/api/begin_authentication', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ username })
         });
-        let currentUser = localStorage.getItem('veridium_username');
-        
-        // QR Scanner variables
-        let videoElement, canvasElement, canvasContext, qrModal, qrStatus;
-        let scanning = false;
-        let stream = null;
-        
-        function showStatus(message, type = 'info') {
-            const statusDiv = document.getElementById('status');
-            statusDiv.innerHTML = `<div class="${type}">${message}</div>`;
-            setTimeout(() => statusDiv.innerHTML = '', 5000);
+        if (!resp.ok) {
+            showStatus('❌ Failed to get options: ' + resp.statusText, 'error');
+            return;
         }
-        
-        // Initialize QR Scanner elements
-        function initQRScanner() {
-            qrModal = document.getElementById('qrModal');
-            qrStatus = document.getElementById('qrStatus');
-            videoElement = document.getElementById('qrVideo');
-            canvasElement = document.getElementById('qrCanvas');
-            canvasContext = canvasElement.getContext('2d');
-        }
-        
-        // Debug logging functions for authentication tracking
-        async function debugBeginAuthentication(payload) {
-            const res = await fetch("/api/begin_authentication", {
-                method: "POST",
-                credentials: "include",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify(payload),
+        const options = await resp.json();
+        try {
+            showStatus('Prompting for biometrics or cross-device...', 'loading');
+            const assertion = await navigator.credentials.get({ publicKey: options });
+            // Convert assertion to JSON for backend
+            const credential = {};
+            Object.keys(assertion).forEach(k => {
+                credential[k] = assertion[k];
             });
-            const text = await res.text();
-            // Dump status, body, and current cookies into the DOM
-            document.body.insertAdjacentHTML("beforeend", `
-                <div style="padding:10px; border:2px solid orange; margin:10px; background: #fff3e6;">
-                    <strong>BEGIN_AUTH:</strong><br>
-                    status = ${res.status}<br>
-                    request = <pre>${JSON.stringify(payload, null, 2)}</pre>
-                    response = <pre>${text}</pre>
-                    document.cookie = "${document.cookie}"
-                </div>
-            `);
-            return JSON.parse(text);
-        }
-
-        async function debugVerifyAuthentication(credential, challengeId) {
-            const res = await fetch("/api/verify_authentication", {
-                method: "POST",
-                credentials: "include",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({credential, challenge_id: challengeId}),
+            credential.id = assertion.id;
+            credential.type = assertion.type;
+            credential.rawId = btoa(String.fromCharCode(...new Uint8Array(assertion.rawId)));
+            credential.response = {};
+            Object.keys(assertion.response).forEach(k => {
+                credential.response[k] = assertion.response[k];
             });
-            const text = await res.text();
-            document.body.insertAdjacentHTML("beforeend", `
-                <div style="padding:10px; border:2px solid green; margin:10px; background: #e6ffe6;">
-                    <strong>VERIFY_AUTH:</strong><br>
-                    status = ${res.status}<br>
-                    challenge_id = ${challengeId}<br>
-                    response = <pre>${text}</pre>
-                    document.cookie = "${document.cookie}"
-                </div>
-            `);
-            return JSON.parse(text);
-        }
-        
-        async function register() {
-            try {
-                showStatus('Starting registration...', 'info');
-                
-                const res = await fetch("/api/begin_registration", {
-                    method: "POST",
-                    credentials: "include",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({
-                    username: 'veridium_user_' + Date.now(),
-                    displayName: 'Veridium User'
-                    }),
-                });
-                
-                if (!res.ok) {
-                    const errorText = await res.text();
-                    showStatus(`❌ Registration failed: ${errorText || 'Unknown error'}`, 'error');
-                    console.error('Backend error:', errorText);
-                    return;
-                }
-                
-                const options = await res.json();
-                showStatus('Please complete biometric authentication...', 'info');
-                
-                const credential = await SimpleWebAuthnBrowser.startRegistration(options);
-                
-                const verifyRes = await fetch("/api/verify_registration", {
-                    method: "POST",
-                    credentials: "include",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({credential, challenge_id: options.challenge_id}),
-                });
-                
-                const result = await verifyRes.json();
-                
-                if (result.verified) {
-                    // Store user_name instead of user_id for better UX
-                    currentUser = result.user_name;
-                    localStorage.setItem('veridium_username', currentUser);
-                    // Clean up old storage
-                    localStorage.removeItem('veridium_user_id');
-                    console.log('Registered and stored username:', currentUser);
-                    showStatus(`✅ Registration successful! Username: ${result.user_name}`, 'success');
-                    
-                    // Debug: Show registration details
-                    document.body.insertAdjacentHTML("beforeend", `
-                        <div style="padding:10px; border:2px solid green; margin:10px; background: #e6ffe6;">
-                            <strong>REGISTRATION SUCCESS:</strong><br>
-                            user_name: ${result.user_name}<br>
-                            user_id: ${result.user_id}<br>
-                            credential_id: ${result.credential_id}<br>
-                            Stored in localStorage: ${localStorage.getItem('veridium_username')}
-                        </div>
-                    `);
-                } else {
-                    showStatus('❌ Registration failed: ' + (result.error || 'Unknown error'), 'error');
-                }
-            } catch (error) {
-                let errorMsg = error.message;
-                if (errorMsg.includes('not supported on sites with TLS certificate errors')) {
-                    errorMsg = 'WebAuthn blocked due to certificate error. Please use HTTP: http://192.168.29.237:5001';
-                }
-                showStatus('❌ Registration error: ' + errorMsg, 'error');
+            credential.response.authenticatorData = btoa(String.fromCharCode(...new Uint8Array(assertion.response.authenticatorData)));
+            credential.response.clientDataJSON = btoa(String.fromCharCode(...new Uint8Array(assertion.response.clientDataJSON)));
+            credential.response.signature = btoa(String.fromCharCode(...new Uint8Array(assertion.response.signature)));
+            if (assertion.response.userHandle) {
+                credential.response.userHandle = btoa(String.fromCharCode(...new Uint8Array(assertion.response.userHandle)));
             }
-        }
-        
-        async function login() {
-            // Try to get stored username first
-            let username = localStorage.getItem('veridium_username');
-            
-            // Handle legacy stored user_id
-            const old_user_id = localStorage.getItem('veridium_user_id');
-            if (old_user_id && !username) {
-                // Migration: clean up old storage and prompt for re-registration
-                localStorage.removeItem('veridium_user_id');
-                showStatus('⚠️ Please re-register for improved login experience', 'error');
+            // Send to backend
+            const verifyResp = await fetch('/api/verify_authentication', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    credential: credential,
+                    challenge_id: options.challenge_id
+                })
+            });
+            if (!verifyResp.ok) {
+                showStatus('❌ Verification failed: ' + verifyResp.statusText, 'error');
                 return;
             }
-            
-            if (!username) {
-                username = prompt('Enter your username (from registration):');
-                if (!username) return;
-            }
-            
-            currentUser = username;
-            
-            try {
-                showStatus('Starting authentication...', 'info');
-                
-                // Use debug function for begin_authentication
-                const options = await debugBeginAuthentication({username: currentUser});
-                
-                if (!options || options.error) {
-                    showStatus(`❌ Authentication setup failed: ${options?.error || 'Unknown error'}`, 'error');
-                    return;
-                }
-                
-                showStatus('Please complete biometric authentication...', 'info');
-                
-                const assertion = await SimpleWebAuthnBrowser.startAuthentication(options);
-                
-                // Use debug function for verify_authentication
-                const result = await debugVerifyAuthentication(assertion, options.challenge_id);
-                
-                if (result.verified) {
-                    showStatus('✅ Authentication successful!', 'success');
-                } else {
-                    showStatus('❌ Authentication failed: ' + (result.error || 'Unknown error'), 'error');
-                }
-            } catch (error) {
-                console.error('Auth setup failed details:', error.message, error.stack);
-                let errorMsg = error.message;
-                if (errorMsg.includes('not supported on sites with TLS certificate errors')) {
-                    errorMsg = 'WebAuthn blocked due to certificate error. Please use HTTP: http://192.168.29.237:5001';
-                }
-                showStatus('❌ Authentication error: ' + errorMsg, 'error');
-            }
-        }
-        
-        async function generateQR() {
-            try {
-                const response = await fetch('/api/generate_qr', {
-                    method: 'POST',
-                    credentials: 'include', // <-- send/receive cookies
-                    headers: {'Content-Type': 'application/json'}
-                });
-                
-                const result = await response.json();
-                
-                if (result.qr_image) {
-                    document.getElementById('qr-code').innerHTML = `<img src="${result.qr_image}" alt="QR Code" style="max-width: 200px;">`;
-                    document.getElementById('qr-section').style.display = 'block';
-                    
-                    // Listen for authentication completion
-                    socket.emit('join_session', {session_id: result.session_id});
-                    showStatus('QR code generated. Waiting for mobile authentication...', 'info');
-                } else {
-                    showStatus('❌ Failed to generate QR code', 'error');
-                }
-            } catch (error) {
-                showStatus('❌ QR generation error: ' + error.message, 'error');
-            }
-        }
-        
-        async function scanQR() {
-            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-                showStatus('❌ Camera not supported in this browser', 'error');
-                return;
-            }
-
-            if (!currentUser) {
-                showStatus('❌ Need username', 'error');
-                return;
-            }
-
-            // Show modal and start camera - let browser handle permission popup naturally
-            qrModal.style.display = 'flex';
-            qrStatus.textContent = 'Requesting camera access...';
-
-            try {
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: { 
-                        facingMode: 'environment',  // Rear camera on mobile
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    }
-                });
-                videoElement.srcObject = stream;
-                await videoElement.play();  // Start playback
-
-                // Set canvas size to match video
-                canvasElement.width = videoElement.videoWidth;
-                canvasElement.height = videoElement.videoHeight;
-
-                scanning = true;
-                qrStatus.textContent = 'Scanning QR code...';
-                requestAnimationFrame(scanFrame);
-            } catch (err) {
-                if (err.name === 'NotAllowedError') {
-                    qrStatus.textContent = '❌ Camera access denied. Please allow camera access when prompted and try again.';
-                } else if (err.name === 'NotFoundError') {
-                    qrStatus.textContent = '❌ No camera found on this device.';
-                } else {
-                    qrStatus.textContent = '❌ Camera error: ' + err.message;
-                }
-                console.error('getUserMedia error:', err);
-            }
-        }
-        
-        function scanFrame() {
-            if (!scanning) return;
-
-            // Draw current video frame to canvas
-            canvasContext.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
-            const imageData = canvasContext.getImageData(0, 0, canvasElement.width, canvasElement.height);
-
-            // Scan with jsQR
-            const code = jsQR(imageData.data, imageData.width, imageData.height);
-
-            if (code) {
-                try {
-                    // Check if it's a Veridium URL
-                    if (code.data.includes('/auth?session_id=')) {
-                        const url = new URL(code.data);
-                        const sessionId = url.searchParams.get('session_id');
-                        if (sessionId) {
-                            qrStatus.textContent = '✅ QR detected! Processing...';
-                            stopScanning();
-                            // Proceed with cross-device authentication
-                            handleCrossDeviceAuth(sessionId);
-                        } else {
-                            qrStatus.textContent = '❌ Invalid QR code format';
-                            requestAnimationFrame(scanFrame);  // Continue scanning
-                        }
-                    } else {
-                        qrStatus.textContent = '❌ Not a Veridium QR code';
-                        requestAnimationFrame(scanFrame);  // Continue scanning
-                    }
-                } catch (err) {
-                    qrStatus.textContent = '❌ Invalid QR code data';
-                    requestAnimationFrame(scanFrame);  // Continue scanning
-                }
+            const verifyResult = await verifyResp.json();
+            if (verifyResult.verified) {
+                showStatus('✅ Login successful!', 'success');
+                // Redirect or update UI as needed
+                setTimeout(() => { window.location.href = '/dashboard'; }, 1500);
             } else {
-                requestAnimationFrame(scanFrame);  // Continue scanning
+                showStatus('❌ Login failed: ' + (verifyResult.error || 'Unknown error'), 'error');
+            }
+        } catch (err) {
+            console.error('WebAuthn error:', err);
+            showStatus('❌ WebAuthn error: ' + err.message, 'error');
+            if (err.name === 'NotSupportedError' || err.name === 'NotAllowedError') {
+                showCustomQRLogin();
             }
         }
-
-        function stopScanning() {
-            scanning = false;
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());  // Release camera
-                stream = null;
-            }
-            qrModal.style.display = 'none';
-        }
-
-        function closeQRModal() {
-            stopScanning();
-            showStatus('Scan cancelled', 'info');
-        }
-
-        async function handleCrossDeviceAuth(sessionId) {
-            try {
-                showStatus('Initiating cross-device authentication...', 'info');
-                
-                // Step 1: Get authentication options
-                const authResponse = await fetch('/api/authenticate_qr', {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ session_id: sessionId })
-                });
-                
-                const authResult = await authResponse.json();
-                
-                if (!authResult.success) {
-                    showStatus('❌ Authentication setup failed: ' + (authResult.error || 'Unknown error'), 'error');
-                    return;
-                }
-                
-                showStatus('Please complete biometric authentication...', 'info');
-                
-                // Step 2: Trigger biometric authentication
-                const assertion = await SimpleWebAuthnBrowser.startAuthentication(authResult.auth_options);
-                
-                // Step 3: Verify the authentication
-                const verifyResponse = await fetch('/api/verify_cross_device_auth', {
-                    method: 'POST',
-                    credentials: 'include',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        credential: assertion,
-                        challenge_id: authResult.auth_options.challenge_id
-                    })
-                });
-                
-                const verifyResult = await verifyResponse.json();
-                
-                if (verifyResult.success) {
-                    showStatus('✅ Cross-device authentication successful! Desktop will be logged in automatically.', 'success');
-                    // The desktop will receive the WebSocket notification and log in automatically
-                } else {
-                    showStatus('❌ Cross-device authentication failed: ' + (verifyResult.error || 'Unknown error'), 'error');
-                }
-            } catch (error) {
-                console.error('Cross-device auth error:', error);
-                showStatus('❌ Cross-device authentication error: ' + error.message, 'error');
-            }
-        }
-        
-        // Socket.IO event handlers
-        socket.on('session_authenticated', function(data) {
-            showStatus(`✅ Cross-device authentication successful! Logged in as: ${data.user_name}`, 'success');
-            document.getElementById('qr-section').style.display = 'none';
-            
-            // Automatically log in the user on desktop
-            currentUser = data.user_name;
-            localStorage.setItem('veridium_username', currentUser);
-            
-            // Update UI to show logged in state
-            showStatus(`Welcome back, ${data.user_name}!`, 'success');
-        });
-        
-        socket.on('session_expired', function(data) {
-            showStatus('❌ Session expired. Please generate a new QR code.', 'error');
-            document.getElementById('qr-section').style.display = 'none';
-        });
-        
-        // Display current user if available
-        if (currentUser) {
-            showStatus(`Current User: ${currentUser}`, 'info');
-        }
-        
-        // Initialize QR Scanner on page load
-        initQRScanner();
+    }
+    document.getElementById('loginButton').addEventListener('click', () => {
+        const username = document.getElementById('usernameInput').value;
+        startWebAuthnLogin(username);
+    });
     </script>
 </body>
 </html>
@@ -891,24 +469,14 @@ def begin_authentication():
 
         for cred in user.credentials:
             try:
-                # Handle transports field - ensure it's a list with proper logging
                 transports = cred.transports if cred.transports else []
-                app.logger.info(f"Raw transports for cred_id {cred.credential_id.hex()[:8]}: {transports} (type: {type(transports)})")
-
-                # First, normalize to list if str (as suggested by Grok)
                 if isinstance(transports, str):
                     try:
                         transports = json.loads(transports)
-                        app.logger.warning(f"Converted string transports to list for cred_id {cred.credential_id.hex()[:8]}: {transports}")
                     except json.JSONDecodeError:
-                        app.logger.warning(f"Invalid transports JSON for cred_id {cred.credential_id.hex()[:8]} - treating as empty")
                         transports = []
-
                 if not isinstance(transports, list):
-                    app.logger.warning(f"Transports not a list for cred_id {cred.credential_id.hex()[:8]} - treating as empty")
                     transports = []
-
-                # Define a mapping for all supported transport types
                 TRANSPORT_MAP = {
                     "usb": AuthenticatorTransport.USB,
                     "nfc": AuthenticatorTransport.NFC,
@@ -917,54 +485,23 @@ def begin_authentication():
                     "cable": AuthenticatorTransport.CABLE,
                     "hybrid": AuthenticatorTransport.HYBRID,
                 }
-
-                # Build enums (as suggested by Grok)
                 transport_enums = []
                 for transport_item in transports:
                     if isinstance(transport_item, str):
                         transport_enum = TRANSPORT_MAP.get(transport_item.lower())
                         if transport_enum:
                             transport_enums.append(transport_enum)
-                            app.logger.info(f"Added transport enum: {transport_enum} for '{transport_item}'")
-                        else:
-                            app.logger.warning(f"Skipping unknown transport string: {transport_item}")
-                    else:
-                        app.logger.warning(f"Skipping non-string transport item: {type(transport_item)}")
-                        # If it's already an enum (rare), append it
-                        if isinstance(transport_item, AuthenticatorTransport):
-                            transport_enums.append(transport_item)
-                            app.logger.info(f"Added existing transport enum: {transport_item}")
-
-                app.logger.info(f"Built transport_enums types: {[type(t).__name__ for t in transport_enums]}")  # Should be ['AuthenticatorTransport', ...]
-
-                # For serialization - add safety (as suggested by Grok)
-                transport_values = []
-                for t in transport_enums:
-                    if isinstance(t, AuthenticatorTransport):
-                        transport_values.append(t.value)
-                    else:
-                        app.logger.error(f"Invalid type in transport_enums: {type(t)} - skipping")
-
-                app.logger.info(f"Safe transport values: {transport_values}")
-
-                # Type assertions for debugging
-                assert isinstance(cred.credential_id, bytes), f"Invalid cred_id type: {type(cred.credential_id)}"
-
-                try:
-                    app.logger.info(f"About to create PublicKeyCredentialDescriptor with transport_enums: {transport_enums}")
-                    app.logger.info(f"transport_enums types: {[type(t) for t in transport_enums] if transport_enums else 'None'}")
-
-                    descriptor = PublicKeyCredentialDescriptor(
-                        id=cred.credential_id,  # id is bytes
-                        type=PublicKeyCredentialType.PUBLIC_KEY, # Use enum
-                        transports=transport_enums if transport_enums else None  # Use enum values or None
-                    )
-
-                    allowed_credentials.append(descriptor)
-                    app.logger.info(f"Successfully created PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}")
-                except Exception as e:
-                    app.logger.error(f"Error processing credential {cred.credential_id.hex()[:8]}: {e}")
-                    continue
+                    elif isinstance(transport_item, AuthenticatorTransport):
+                        transport_enums.append(transport_item)
+                # Always include HYBRID for caBLE support
+                if AuthenticatorTransport.HYBRID not in transport_enums:
+                    transport_enums.append(AuthenticatorTransport.HYBRID)
+                descriptor = PublicKeyCredentialDescriptor(
+                    id=cred.credential_id,
+                    type=PublicKeyCredentialType.PUBLIC_KEY,
+                    transports=transport_enums if transport_enums else None
+                )
+                allowed_credentials.append(descriptor)
             except Exception as e:
                 app.logger.error(f"Error processing credential {cred.credential_id.hex()[:8]}: {e}")
                 continue
