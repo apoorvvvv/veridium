@@ -103,19 +103,25 @@ HTML_TEMPLATE = '''
         #debug { margin: 10px 0; padding: 10px; background: rgba(0,0,0,0.15); border-radius: 6px; font-size: 13px; word-break: break-all; }
         #current-user { margin-top: 30px; font-size: 16px; color: #fff; background: rgba(0,0,0,0.18); padding: 10px 0; border-radius: 6px; text-align: center; }
     </style>
-    <script src="https://unpkg.com/@simplewebauthn/browser@13.1.2/dist/bundle/index.umd.js" defer></script>
 </head>
 <body>
     <div class="container">
         <h1>🔐 Veridium</h1>
         <div id="status">Ready for passwordless authentication.</div>
         <div id="debug"></div>
-        <button onclick="handleSignup()">Sign Up with Biometrics</button>
-        <button onclick="handleLogin()">Login with Biometrics</button>
+        <button id="signupButton">Sign Up with Biometrics</button>
+        <button id="loginButton">Login with Biometrics</button>
     </div>
     <div id="current-user"></div>
     <script>
-    window.addEventListener('load', () => {
+    function loadScript(url, callback) {
+        const script = document.createElement('script');
+        script.src = url;
+        script.onload = callback;
+        script.onerror = () => console.error('SimpleWebAuthn script load failed');
+        document.head.appendChild(script);
+    }
+    loadScript('https://unpkg.com/@simplewebauthn/browser@13.1.2/dist/bundle/index.umd.js', () => {
         function setStatus(msg) {
             document.getElementById('status').textContent = msg;
         }
@@ -150,7 +156,6 @@ HTML_TEMPLATE = '''
                 setDebug({ step: 'verify_registration', result });
                 if (result.verified) {
                     setStatus('✅ Signup successful! You can now log in.');
-                    // Store a pseudo-username for display (e.g., credential id or timestamp)
                     const userLabel = 'user_' + Date.now();
                     localStorage.setItem('veridium_username', userLabel);
                     setCurrentUser(userLabel);
@@ -182,7 +187,6 @@ HTML_TEMPLATE = '''
                 setDebug({ step: 'verify_authentication', result });
                 if (result.verified) {
                     setStatus('✅ Login successful!');
-                    // Store a pseudo-username for display (e.g., credential id or timestamp)
                     const userLabel = 'user_' + Date.now();
                     localStorage.setItem('veridium_username', userLabel);
                     setCurrentUser(userLabel);
@@ -194,8 +198,8 @@ HTML_TEMPLATE = '''
                 setDebug(err.stack || err);
             }
         }
-        window.handleSignup = handleSignup;
-        window.handleLogin = handleLogin;
+        document.getElementById('signupButton').addEventListener('click', handleSignup);
+        document.getElementById('loginButton').addEventListener('click', handleLogin);
     });
     </script>
 </body>
