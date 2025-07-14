@@ -25,7 +25,7 @@ class User(db.Model):
     @classmethod
     def create_user(cls, user_name=None, display_name=None):
         """Create a new user with a unique WebAuthn user ID"""
-        user_id_bytes = secrets.token_bytes(64)  # 64 random bytes for WebAuthn 2.1.0
+        user_id_bytes = secrets.token_bytes(32)  # 32 random bytes for SimpleWebAuthn compatibility
         user_id_str = base64.urlsafe_b64encode(user_id_bytes).decode('utf-8').rstrip('=')  # base64url, no padding
 
         user = cls(

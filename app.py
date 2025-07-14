@@ -482,9 +482,10 @@ def begin_registration():
         db.session.add(user)
         db.session.flush()  # Get the user ID
         
-        # Decode stored str to bytes for the library
+        # Decode stored str to bytes for the library (should be 32 bytes)
         import base64
         user_id_bytes = base64.urlsafe_b64decode(user.user_id + '==')  # Add padding if needed
+        assert len(user_id_bytes) == 32, f"user_id_bytes is {len(user_id_bytes)} bytes, expected 32"
         
         # Generate registration options with attestation="none"
         options = generate_registration_options(
