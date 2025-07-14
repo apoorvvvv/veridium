@@ -100,19 +100,31 @@ HTML_TEMPLATE = '''
         button { background: #4CAF50; color: white; border: none; padding: 16px 32px; border-radius: 8px; font-size: 18px; margin: 16px 0; cursor: pointer; width: 100%; transition: background 0.2s; }
         button:hover { background: #388e3c; }
         #status { margin: 16px 0; padding: 12px; border-radius: 6px; background: rgba(255,255,255,0.1); color: #fff; min-height: 32px; font-size: 15px; }
-        #debug { margin: 10px 0; padding: 10px; background: rgba(0,0,0,0.15); border-radius: 6px; font-size: 13px; word-break: break-all; }
+        #debug-panel {
+            position: fixed; left: 0; right: 0; bottom: 0; z-index: 9999;
+            background: #222; color: #fff; font-size: 15px; padding: 12px 8px 32px 8px;
+            max-height: 40vh; overflow-y: auto; border-top: 2px solid #888;
+            word-break: break-all; user-select: text; -webkit-user-select: text;
+        }
+        #show-debug-btn { position: fixed; right: 12px; bottom: 48px; z-index: 10000; background: #ff9800; color: #fff; border: none; border-radius: 20px; padding: 10px 18px; font-size: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
         #current-user { margin-top: 30px; font-size: 16px; color: #fff; background: rgba(0,0,0,0.18); padding: 10px 0; border-radius: 6px; text-align: center; }
+        @media (max-width: 600px) {
+            .container { padding: 18px 4px; }
+            #debug-panel { font-size: 13px; padding: 8px 4px 28px 4px; }
+            #show-debug-btn { font-size: 14px; padding: 7px 12px; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>🔐 Veridium</h1>
         <div id="status">Ready for passwordless authentication.</div>
-        <div id="debug"></div>
         <button id="signupButton">Sign Up with Biometrics</button>
         <button id="loginButton">Login with Biometrics</button>
     </div>
     <div id="current-user"></div>
+    <button id="show-debug-btn" onclick="showDebugAlert()">Show Debug</button>
+    <div id="debug-panel"></div>
     <script>
     function loadScript(url, callback) {
         const script = document.createElement('script');
@@ -121,13 +133,18 @@ HTML_TEMPLATE = '''
         script.onerror = () => console.error('SimpleWebAuthn script load failed');
         document.head.appendChild(script);
     }
-    loadScript('https://unpkg.com/@simplewebauthn/browser@13.1.2/dist/bundle/index.umd.js', () => {
+    loadScript('https://unpkg.com/@simplewebauthn/browser@13.1.2/dist/simplewebauthn-browser.umd.js', () => {
+        let lastDebug = '';
         function setStatus(msg) {
             document.getElementById('status').textContent = msg;
         }
         function setDebug(obj) {
-            document.getElementById('debug').textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+            lastDebug = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+            document.getElementById('debug-panel').textContent = lastDebug;
         }
+        window.showDebugAlert = function() {
+            alert(lastDebug || 'No debug info yet.');
+        };
         function setCurrentUser(user) {
             document.getElementById('current-user').textContent = user ? `Current User: ${user}` : 'Not logged in.';
         }
@@ -136,24 +153,34 @@ HTML_TEMPLATE = '''
         }
         setCurrentUser(getCurrentUser());
 
+        async function fetchWithDebug(url, options, step) {
+            let resp, text, json;
+            try {
+                resp = await fetch(url, options);
+                text = await resp.text();
+                try { json = JSON.parse(text); } catch { json = text; }
+                setDebug({ step, url, status: resp.status, body: json });
+                return { resp, json };
+            } catch (err) {
+                setDebug({ step, url, error: err.message });
+                throw err;
+            }
+        }
+
         async function handleSignup() {
             setDebug('');
             try {
                 setStatus('Requesting registration options...');
-                const optionsResp = await fetch('/api/begin_registration', { method: 'POST' });
-                const options = await optionsResp.json();
-                setDebug({ step: 'begin_registration', options });
+                let { json: options } = await fetchWithDebug('/api/begin_registration', { method: 'POST' }, 'begin_registration');
                 setStatus('Prompting for biometrics...');
                 const credential = await SimpleWebAuthnBrowser.startRegistration(options);
                 setDebug({ step: 'startRegistration', credential });
                 setStatus('Verifying registration...');
-                const verifyResp = await fetch('/api/verify_registration', {
+                let { json: result } = await fetchWithDebug('/api/verify_registration', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ credential, challenge_id: options.challenge_id })
-                });
-                const result = await verifyResp.json();
-                setDebug({ step: 'verify_registration', result });
+                }, 'verify_registration');
                 if (result.verified) {
                     setStatus('✅ Signup successful! You can now log in.');
                     const userLabel = 'user_' + Date.now();
@@ -171,20 +198,16 @@ HTML_TEMPLATE = '''
             setDebug('');
             try {
                 setStatus('Requesting authentication options...');
-                const optionsResp = await fetch('/api/begin_authentication', { method: 'POST' });
-                const options = await optionsResp.json();
-                setDebug({ step: 'begin_authentication', options });
+                let { json: options } = await fetchWithDebug('/api/begin_authentication', { method: 'POST' }, 'begin_authentication');
                 setStatus('Prompting for biometrics...');
                 const assertion = await SimpleWebAuthnBrowser.startAuthentication(options);
                 setDebug({ step: 'startAuthentication', assertion });
                 setStatus('Verifying login...');
-                const verifyResp = await fetch('/api/verify_authentication', {
+                let { json: result } = await fetchWithDebug('/api/verify_authentication', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ credential: assertion, challenge_id: options.challenge_id })
-                });
-                const result = await verifyResp.json();
-                setDebug({ step: 'verify_authentication', result });
+                }, 'verify_authentication');
                 if (result.verified) {
                     setStatus('✅ Login successful!');
                     const userLabel = 'user_' + Date.now();
@@ -311,9 +334,9 @@ def begin_registration():
 
 @app.route('/api/verify_registration', methods=['POST'])
 def verify_registration():
-    data = request.get_json()
-    credential = data.get('credential')
-    challenge_id = data.get('challenge_id')
+        data = request.get_json()
+        credential = data.get('credential')
+        challenge_id = data.get('challenge_id')
     stored_challenge = session.get(f'challenge_{challenge_id}')
     stored_user_id = session.get(f'user_id_{challenge_id}')
     if not stored_challenge or not stored_user_id:
@@ -331,13 +354,13 @@ def verify_registration():
         db.session.commit()
         # Store credential linked to user
         credential_model = Credential(
-            user_id=user.id,
+                user_id=user.id,
             credential_id=verified_registration.credential_id,
             public_key=verified_registration.credential_public_key,
             sign_count=verified_registration.sign_count
         )
         db.session.add(credential_model)
-        db.session.commit()
+            db.session.commit()
         # Clean up session
         session.pop(f'challenge_{challenge_id}')
         session.pop(f'user_id_{challenge_id}')
@@ -351,12 +374,12 @@ def begin_authentication():
     challenge = os.urandom(32)
     challenge_id = str(uuid.uuid4())
     session[f'challenge_{challenge_id}'] = challenge
-    options = generate_authentication_options(
-        rp_id=Config.get_webauthn_rp_id(),
+        options = generate_authentication_options(
+            rp_id=Config.get_webauthn_rp_id(),
         challenge=challenge,
-        user_verification=UserVerificationRequirement.REQUIRED,
-        timeout=60000
-    )
+            user_verification=UserVerificationRequirement.REQUIRED,
+            timeout=60000
+        )
     options_json = json.loads(options_to_json(options))
     options_json['challenge_id'] = challenge_id
     return jsonify(options_json), 200
@@ -442,16 +465,16 @@ def verify_cross_device_auth():
         
         # Update credential
         db_credential.sign_count = verified_authentication.new_sign_count
-        db_credential.last_used = datetime.utcnow()
-        user.last_login = datetime.utcnow()
+            db_credential.last_used = datetime.utcnow()
+            user.last_login = datetime.utcnow()
         
         # Update cross-device session
         session_obj = CrossDeviceSession.query.filter_by(session_id=session_id).first()
         if session_obj:
             session_obj.authenticate(user.user_id)
         
-        db.session.commit()
-        
+            db.session.commit()
+            
         # Emit success to desktop via WebSocket
         socketio.emit('session_authenticated', {
             'session_id': session_id,
@@ -462,13 +485,13 @@ def verify_cross_device_auth():
         # Clean up session
         session.pop(f'cross_device_challenge_{challenge_id}', None)
         
-        return jsonify({
+            return jsonify({
             'success': True,
-            'user_id': user.user_id,
+                'user_id': user.user_id,
             'user_name': user.user_name,
             'message': 'Cross-device authentication successful'
-        })
-        
+            })
+            
     except InvalidAuthenticationResponse as e:
         app.logger.error(f"Cross-device authentication verification failed: {e}")
         return jsonify({'success': False, 'error': str(e)}), 400
