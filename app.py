@@ -706,18 +706,26 @@ def begin_authentication():
         # Get allowed credentials (list of dicts with id as base64url)
         allowed_credentials = []
         for cred in user.credentials:
-            # Handle transports field - ensure it's a list
+            # Handle transports field - ensure it's a list with proper logging
             transports = cred.transports if cred.transports else []
             if isinstance(transports, str):
                 try:
                     transports = json.loads(transports)
-                except (json.JSONDecodeError, TypeError):
-                    transports = []
+                    app.logger.warning(f"Converted string transports to list for cred_id {cred.credential_id.hex()[:8]}")
+                except (json.JSONDecodeError, TypeError) as e:
+                    app.logger.error(f"Invalid transports string for cred_id {cred.credential_id.hex()[:8]}: {e}")
+                    transports = []  # Fallback
+            elif not isinstance(transports, list):
+                app.logger.warning(f"Unexpected transports type {type(transports)} for cred_id {cred.credential_id.hex()[:8]}")
+                transports = []  # Extra safety for other types
+            
+            # Type assertions for debugging
+            assert isinstance(cred.credential_id, bytes), f"Invalid cred_id type: {type(cred.credential_id)}"
             
             allowed_credentials.append(PublicKeyCredentialDescriptor(
                 id=cred.credential_id,  # id is bytes
                 type="public-key",
-                transports=transports
+                transports=transports if transports else None  # None is better than empty list per spec
             ))
         
         # Generate challenge
@@ -838,6 +846,11 @@ def verify_authentication():
         db_credential = Credential.query.filter_by(credential_id=cred_id_bytes).first()
         if not db_credential:
             return jsonify({'error': 'Credential not found', 'verified': False}), 400
+        
+        # Type assertions for debugging
+        assert isinstance(db_credential.credential_id, bytes), f"Invalid stored cred_id type: {type(db_credential.credential_id)}"
+        assert isinstance(db_credential.public_key, bytes), f"Invalid public_key type: {type(db_credential.public_key)}"
+        assert isinstance(db_credential.sign_count, int), f"Invalid sign_count type: {type(db_credential.sign_count)}"
         
         # Get user
         user = User.query.filter_by(id=db_credential.user_id).first()
