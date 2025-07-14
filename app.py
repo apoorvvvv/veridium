@@ -99,7 +99,9 @@ HTML_TEMPLATE = '''
         h1 { margin-bottom: 24px; }
         button { background: #4CAF50; color: white; border: none; padding: 16px 32px; border-radius: 8px; font-size: 18px; margin: 16px 0; cursor: pointer; width: 100%; transition: background 0.2s; }
         button:hover { background: #388e3c; }
-        #status { margin: 16px 0; padding: 12px; border-radius: 6px; background: rgba(255,255,255,0.1); color: #fff; min-height: 32px; }
+        #status { margin: 16px 0; padding: 12px; border-radius: 6px; background: rgba(255,255,255,0.1); color: #fff; min-height: 32px; font-size: 15px; }
+        #debug { margin: 10px 0; padding: 10px; background: rgba(0,0,0,0.15); border-radius: 6px; font-size: 13px; word-break: break-all; }
+        #current-user { margin-top: 30px; font-size: 16px; color: #fff; background: rgba(0,0,0,0.18); padding: 10px 0; border-radius: 6px; text-align: center; }
     </style>
     <script src="https://unpkg.com/@simplewebauthn/browser@13.1.2/dist/bundle/index.umd.js" defer></script>
 </head>
@@ -107,18 +109,37 @@ HTML_TEMPLATE = '''
     <div class="container">
         <h1>🔐 Veridium</h1>
         <div id="status">Ready for passwordless authentication.</div>
+        <div id="debug"></div>
         <button onclick="handleSignup()">Sign Up with Biometrics</button>
         <button onclick="handleLogin()">Login with Biometrics</button>
     </div>
+    <div id="current-user"></div>
     <script>
     window.addEventListener('load', () => {
+        function setStatus(msg) {
+            document.getElementById('status').textContent = msg;
+        }
+        function setDebug(obj) {
+            document.getElementById('debug').textContent = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 2);
+        }
+        function setCurrentUser(user) {
+            document.getElementById('current-user').textContent = user ? `Current User: ${user}` : 'Not logged in.';
+        }
+        function getCurrentUser() {
+            return localStorage.getItem('veridium_username') || '';
+        }
+        setCurrentUser(getCurrentUser());
+
         async function handleSignup() {
+            setDebug('');
             try {
                 setStatus('Requesting registration options...');
                 const optionsResp = await fetch('/api/begin_registration', { method: 'POST' });
                 const options = await optionsResp.json();
+                setDebug({ step: 'begin_registration', options });
                 setStatus('Prompting for biometrics...');
                 const credential = await SimpleWebAuthnBrowser.startRegistration(options);
+                setDebug({ step: 'startRegistration', credential });
                 setStatus('Verifying registration...');
                 const verifyResp = await fetch('/api/verify_registration', {
                     method: 'POST',
@@ -126,22 +147,31 @@ HTML_TEMPLATE = '''
                     body: JSON.stringify({ credential, challenge_id: options.challenge_id })
                 });
                 const result = await verifyResp.json();
+                setDebug({ step: 'verify_registration', result });
                 if (result.verified) {
                     setStatus('✅ Signup successful! You can now log in.');
+                    // Store a pseudo-username for display (e.g., credential id or timestamp)
+                    const userLabel = 'user_' + Date.now();
+                    localStorage.setItem('veridium_username', userLabel);
+                    setCurrentUser(userLabel);
                 } else {
                     setStatus('❌ Signup failed: ' + (result.error || 'Unknown error'));
                 }
             } catch (err) {
                 setStatus('❌ Signup failed: ' + err.message);
+                setDebug(err.stack || err);
             }
         }
         async function handleLogin() {
+            setDebug('');
             try {
                 setStatus('Requesting authentication options...');
                 const optionsResp = await fetch('/api/begin_authentication', { method: 'POST' });
                 const options = await optionsResp.json();
+                setDebug({ step: 'begin_authentication', options });
                 setStatus('Prompting for biometrics...');
                 const assertion = await SimpleWebAuthnBrowser.startAuthentication(options);
+                setDebug({ step: 'startAuthentication', assertion });
                 setStatus('Verifying login...');
                 const verifyResp = await fetch('/api/verify_authentication', {
                     method: 'POST',
@@ -149,20 +179,23 @@ HTML_TEMPLATE = '''
                     body: JSON.stringify({ credential: assertion, challenge_id: options.challenge_id })
                 });
                 const result = await verifyResp.json();
+                setDebug({ step: 'verify_authentication', result });
                 if (result.verified) {
                     setStatus('✅ Login successful!');
+                    // Store a pseudo-username for display (e.g., credential id or timestamp)
+                    const userLabel = 'user_' + Date.now();
+                    localStorage.setItem('veridium_username', userLabel);
+                    setCurrentUser(userLabel);
                 } else {
                     setStatus('❌ Login failed: ' + (result.error || 'Unknown error'));
                 }
             } catch (err) {
                 setStatus('❌ Login failed: ' + err.message);
+                setDebug(err.stack || err);
             }
         }
         window.handleSignup = handleSignup;
         window.handleLogin = handleLogin;
-        function setStatus(msg) {
-            document.getElementById('status').textContent = msg;
-        }
     });
     </script>
 </body>
