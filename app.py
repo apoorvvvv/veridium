@@ -871,12 +871,27 @@ def begin_authentication():
                 # Add debugging as suggested by Grok
                 app.logger.info(f"Transports enums: {[type(e).__name__ for e in transport_enums]}")  # Should be ['AuthenticatorTransport', ...]
                 
+                # EXTRA DEBUGGING: Check each transport enum individually
+                for i, transport_enum in enumerate(transport_enums):
+                    try:
+                        app.logger.info(f"Transport {i}: {transport_enum} (type: {type(transport_enum)})")
+                        app.logger.info(f"Transport {i} has value attribute: {hasattr(transport_enum, 'value')}")
+                        if hasattr(transport_enum, 'value'):
+                            app.logger.info(f"Transport {i} value: {transport_enum.value}")
+                    except Exception as e:
+                        app.logger.error(f"Error inspecting transport {i}: {e}")
+                
                 # Type assertions for debugging
                 assert isinstance(cred.credential_id, bytes), f"Invalid cred_id type: {type(cred.credential_id)}"
                 
                 try:
                     app.logger.info(f"About to create PublicKeyCredentialDescriptor with transport_enums: {transport_enums}")
                     app.logger.info(f"transport_enums types: {[type(t) for t in transport_enums] if transport_enums else 'None'}")
+                    
+                    # EXTRA DEBUGGING: Check each parameter individually
+                    app.logger.info(f"cred.credential_id type: {type(cred.credential_id)}")
+                    app.logger.info(f"PublicKeyCredentialType.PUBLIC_KEY: {PublicKeyCredentialType.PUBLIC_KEY} (type: {type(PublicKeyCredentialType.PUBLIC_KEY)})")
+                    app.logger.info(f"transport_enums: {transport_enums}")
                     
                     descriptor = PublicKeyCredentialDescriptor(
                         id=cred.credential_id,  # id is bytes
@@ -894,6 +909,8 @@ def begin_authentication():
                     app.logger.error(f"Error creating PublicKeyCredentialDescriptor for cred_id {cred.credential_id.hex()[:8]}: {e}")
                     app.logger.error(f"Error type: {type(e)}")
                     app.logger.error(f"Error details: {str(e)}")
+                    import traceback
+                    app.logger.error(f"Full traceback: {traceback.format_exc()}")
                     raise
             except Exception as e:
                 app.logger.error(f"Error processing credential {cred.credential_id.hex()[:8]}: {e}")
@@ -907,6 +924,11 @@ def begin_authentication():
         
         # Generate options
         try:
+            app.logger.info(f"About to call generate_authentication_options with {len(allowed_credentials)} credentials")
+            app.logger.info(f"rp_id: {Config.get_webauthn_rp_id()}")
+            app.logger.info(f"challenge type: {type(challenge)}")
+            app.logger.info(f"allowed_credentials: {allowed_credentials}")
+            
             options = generate_authentication_options(
                 rp_id=Config.get_webauthn_rp_id(),
                 challenge=challenge,
@@ -922,7 +944,20 @@ def begin_authentication():
             raise
         
         # Convert to JSON-friendly (library has options_to_json helper if needed)
-        options_json = json.loads(options_to_json(options))
+        try:
+            app.logger.info(f"About to convert options to JSON")
+            options_json_str = options_to_json(options)
+            app.logger.info(f"options_to_json result type: {type(options_json_str)}")
+            app.logger.info(f"options_to_json result: {options_json_str[:200]}...")  # First 200 chars
+            
+            options_json = json.loads(options_json_str)
+            app.logger.info(f"JSON parsing successful")
+        except Exception as e:
+            import traceback
+            app.logger.error(f"Error converting options to JSON: {e}")
+            app.logger.error(f"Full traceback: {traceback.format_exc()}")
+            raise
+            
         options_json['challenge_id'] = challenge_id  # Add for frontend to send back
         
         app.logger.info(f"Generated auth options for user {username} with {len(allowed_credentials)} credentials")
