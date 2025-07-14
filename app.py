@@ -25,6 +25,7 @@ import secrets
 from collections import namedtuple
 from webauthn.helpers import parse_registration_credential_json, parse_authentication_credential_json
 from webauthn.helpers.exceptions import InvalidRegistrationResponse, InvalidAuthenticationResponse
+import binascii
 
 print("*** RUNNING UPDATED APP.PY WITH STRING USER_ID FIX ***")
 
@@ -983,13 +984,22 @@ def verify_authentication():
         user_handle = auth_credential.response.user_handle  # bytes or None
         
         if user_handle:
+            # Convert stored user.user_id to bytes if it's str (base64url-encoded)
+            stored_user_id_bytes = user.user_id
+            if isinstance(stored_user_id_bytes, str):
+                try:
+                    stored_user_id_bytes = base64.urlsafe_b64decode(stored_user_id_bytes + '==')  # Add padding if needed, decode to bytes
+                except (binascii.Error, ValueError) as e:
+                    app.logger.error(f"Invalid base64url for stored user_id: {e}")
+                    raise ValueError("Stored user_id decoding failed - potential data issue")
+            
             # For security, verify it matches the expected user's stored user_id_bytes
-            if user_handle != user.user_id:  # Assuming user.user_id is bytes
+            if user_handle != stored_user_id_bytes:
                 raise ValueError("User handle mismatch - potential security issue")
             user_id = user_handle  # Use it if needed
         else:
-            # If None (common for non-discoverable credentials), fall back to your looked-up user
-            user_id = user.user_id  # From the initial lookup via username
+            # If None, fall back to your looked-up user (assume user.user_id is bytes here)
+            user_id = user.user_id if isinstance(user.user_id, bytes) else base64.urlsafe_b64decode(user.user_id + '==')
         
         # Success response
         return jsonify({
