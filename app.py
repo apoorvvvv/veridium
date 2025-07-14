@@ -979,13 +979,22 @@ def verify_authentication():
         user.last_login = datetime.utcnow()
         db.session.commit()
         
-        # Optional: Get user_handle (user_id bytes) for confirmation
-        user_id = verified_authentication.user_handle
+        # Optional: Get user_handle (user_id bytes) for confirmation from the input credential
+        user_handle = auth_credential.response.user_handle  # bytes or None
+        
+        if user_handle:
+            # For security, verify it matches the expected user's stored user_id_bytes
+            if user_handle != user.user_id:  # Assuming user.user_id is bytes
+                raise ValueError("User handle mismatch - potential security issue")
+            user_id = user_handle  # Use it if needed
+        else:
+            # If None (common for non-discoverable credentials), fall back to your looked-up user
+            user_id = user.user_id  # From the initial lookup via username
         
         # Success response
         return jsonify({
             'verified': True, 
-            'user_id': base64.urlsafe_b64encode(user_id).decode('utf-8').rstrip('=') if user_id else user.user_id
+            'user_id': base64.urlsafe_b64encode(user_id).decode('utf-8').rstrip('=') if user_id else None
         }), 200
     
     except InvalidAuthenticationResponse as e:
