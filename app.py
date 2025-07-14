@@ -18,6 +18,7 @@ import qrcode
 import io
 from datetime import datetime
 import secrets
+from collections import namedtuple
 
 print("*** RUNNING UPDATED APP.PY WITH STRING USER_ID FIX ***")
 
@@ -501,42 +502,43 @@ def verify_registration():
         def add_padding(b64_str):
             return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
         
-        response = credential.get('response', {})
+        response_dict = credential.get('response', {})
         app.logger.info(f"Credential keys: {list(credential.keys())}")
-        app.logger.info(f"Response keys: {list(response.keys())}")
+        app.logger.info(f"Response keys: {list(response_dict.keys())}")
         
-        if 'clientDataJSON' in response:
-            client_data = add_padding(response['clientDataJSON'])
-            response['clientDataJSON'] = base64.urlsafe_b64decode(client_data).decode('utf-8')
-        if 'attestationObject' in response:
-            att_obj = add_padding(response['attestationObject'])
-            response['attestationObject'] = base64.urlsafe_b64decode(att_obj)
+        if 'clientDataJSON' in response_dict:
+            client_data = add_padding(response_dict['clientDataJSON'])
+            response_dict['clientDataJSON'] = base64.urlsafe_b64decode(client_data).decode('utf-8')
+        if 'attestationObject' in response_dict:
+            att_obj = add_padding(response_dict['attestationObject'])
+            response_dict['attestationObject'] = base64.urlsafe_b64decode(att_obj)
         else:
             app.logger.warning("attestationObject missing - using empty bytes fallback for 'none'")
-            response['attestationObject'] = b''  # Empty bytes fallback
+            response_dict['attestationObject'] = b''  # Empty bytes fallback
         
-        # Fix: Ensure raw_id is always bytes
-        from types import SimpleNamespace
-        import re
-        def camel_to_snake(name):
-            s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
-            return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
-        # Convert response dict keys to snake_case attributes
-        response_obj = SimpleNamespace(**{camel_to_snake(k): v for k, v in response.items()})
-        if 'rawId' in credential:
-            raw_id = credential['rawId']
-            if isinstance(raw_id, str):
-                raw_id = base64.urlsafe_b64decode(add_padding(raw_id))
-        elif 'id' in credential:
-            raw_id = base64.urlsafe_b64decode(add_padding(credential['id']))
-        else:
-            raise ValueError("Credential missing both 'rawId' and 'id'")
-        credential_obj = SimpleNamespace(
-            id=credential.get('id'),
-            raw_id=raw_id,
-            response=response_obj,
-            type=credential.get('type', 'public-key')
+        # Fix: Add 'rawId' if missing (decode from 'id')
+        if 'rawId' not in credential:
+            if 'id' in credential:
+                credential['rawId'] = base64.urlsafe_b64decode(add_padding(credential['id']))
+                app.logger.info("Added rawId fallback from id")
+            else:
+                raise ValueError("Credential missing both 'rawId' and 'id'")
+        
+        # Convert response dict to namedtuple with snake_case for py_webauthn
+        WebAuthnResponse = namedtuple('WebAuthnResponse', [
+            'client_data_json', 'attestation_object', 'authenticator_data',
+            'signature', 'user_handle', 'transports'
+        ])
+        response = WebAuthnResponse(
+            client_data_json=response_dict.get('clientDataJSON'),
+            attestation_object=response_dict.get('attestationObject'),
+            authenticator_data=response_dict.get('authenticatorData'),
+            signature=response_dict.get('signature'),
+            user_handle=response_dict.get('userHandle'),
+            transports=response_dict.get('transports', [])
         )
+        credential['response'] = response  # Replace dict with struct
+        app.logger.info(f"Converted response to snake_case struct: {response}")
         
         # Convert challenge to base64 str if bytes
         expected_challenge = challenge.challenge
@@ -545,7 +547,7 @@ def verify_registration():
         
         # Verify
         verification = verify_registration_response(
-            credential=credential_obj,
+            credential=credential,
             expected_challenge=expected_challenge,
             expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
             expected_rp_id=Config.get_webauthn_rp_id(),
