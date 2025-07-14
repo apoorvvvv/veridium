@@ -19,6 +19,7 @@ import io
 from datetime import datetime
 import secrets
 from collections import namedtuple
+from webauthn.helpers import parse_registration_credential_json, parse_authentication_credential_json
 
 print("*** RUNNING UPDATED APP.PY WITH STRING USER_ID FIX ***")
 
@@ -483,7 +484,7 @@ def begin_registration():
 def verify_registration():
     try:
         data = request.get_json()
-        credential = data.get('credential')
+        credential_json = data.get('credential')
         challenge_id = data.get('challenge_id')
         
         # Get and validate challenge
@@ -498,41 +499,13 @@ def verify_registration():
             app.logger.error(f"User not found for challenge {challenge_id}")
             return jsonify({'verified': False, 'error': 'User not found'})
         
-        # Fix base64 padding
-        def add_padding(b64_str):
-            return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
-        
-        response = credential.get('response', {})
-        app.logger.info(f"Credential keys: {list(credential.keys())}")
-        app.logger.info(f"Response keys: {list(response.keys())}")
-        
-        if 'clientDataJSON' in response:
-            client_data = add_padding(response['clientDataJSON'])
-            response['clientDataJSON'] = base64.urlsafe_b64decode(client_data).decode('utf-8')
-        if 'attestationObject' in response:
-            att_obj = add_padding(response['attestationObject'])
-            response['attestationObject'] = base64.urlsafe_b64decode(att_obj)
-        else:
-            app.logger.warning("attestationObject missing - using empty bytes fallback for 'none'")
-            response['attestationObject'] = b''  # Empty bytes fallback
-        
-        # Fix: Add 'rawId' if missing (decode from 'id')
-        if 'rawId' not in credential:
-            if 'id' in credential:
-                credential['rawId'] = base64.urlsafe_b64decode(add_padding(credential['id']))
-                app.logger.info("Added rawId fallback from id")
-            else:
-                raise ValueError("Credential missing both 'rawId' and 'id'")
-        
-        # Convert challenge to base64 str if bytes
-        expected_challenge = challenge.challenge
-        if isinstance(expected_challenge, bytes):
-            expected_challenge = base64.urlsafe_b64encode(expected_challenge).decode('utf-8').rstrip('=')
+        # Parse the JSON dict to the required struct (handles base64 decoding internally)
+        credential = parse_registration_credential_json(credential_json)
         
         # Verify
         verification = verify_registration_response(
             credential=credential,
-            expected_challenge=expected_challenge,
+            expected_challenge=challenge.challenge,  # Pass as bytes
             expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
             expected_rp_id=Config.get_webauthn_rp_id(),
             require_user_verification=True
@@ -544,7 +517,7 @@ def verify_registration():
                 credential_id=verification.credential_id,
                 public_key=verification.credential_public_key,
                 sign_count=verification.sign_count,
-                transports=credential.get('response', {}).get('transports', [])
+                transports=credential_json.get('response', {}).get('transports', [])  # Still grab from JSON
             )
             db.session.add(cred)
             
@@ -637,7 +610,7 @@ def verify_authentication():
     print("[VERIFY_AUTH] session cookie:", request.cookies.get('session', 'NOT_FOUND'))
     try:
         data = request.get_json()
-        credential = data.get('credential')
+        credential_json = data.get('credential')
         user_id = data.get('user_id')
         challenge_id = data.get('challenge_id')
         
@@ -653,34 +626,19 @@ def verify_authentication():
             app.logger.error(f"User not found for challenge {challenge_id}")
             return jsonify({'verified': False, 'error': 'User not found'})
         
-        credential_id = base64.urlsafe_b64decode(credential.get('id', ''))
+        credential_id = base64.urlsafe_b64decode(credential_json.get('id', ''))
         db_credential = Credential.query.filter_by(credential_id=credential_id).first()
         if not db_credential:
             app.logger.error(f"Credential not found for user {user.user_id}")
             return jsonify({'verified': False, 'error': 'Credential not found'})
         
-        # Fix base64 padding
-        def add_padding(b64_str):
-            return b64_str + '=' * ((4 - len(b64_str) % 4) % 4)
-        
-        response = credential.get('response', {})
-        if 'clientDataJSON' in response:
-            client_data = add_padding(response['clientDataJSON'])
-            response['clientDataJSON'] = base64.urlsafe_b64decode(client_data).decode('utf-8')
-        if 'authenticatorData' in response:
-            auth_data = add_padding(response['authenticatorData'])
-            response['authenticatorData'] = base64.urlsafe_b64decode(auth_data)
-        if 'signature' in response:
-            signature = add_padding(response['signature'])
-            response['signature'] = base64.urlsafe_b64decode(signature)
-        
-        # Fix: Convert challenge bytes to base64url str (lib expects str)
-        expected_challenge_str = base64.urlsafe_b64encode(challenge.challenge).decode('utf-8')
+        # Parse the JSON dict to the required struct (handles base64 decoding internally)
+        credential = parse_authentication_credential_json(credential_json)
         
         # Verify
         verification = verify_authentication_response(
             credential=credential,
-            expected_challenge=expected_challenge_str,
+            expected_challenge=challenge.challenge,  # Pass as bytes
             expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
             expected_rp_id=Config.get_webauthn_rp_id(),
             credential_public_key=db_credential.public_key,
