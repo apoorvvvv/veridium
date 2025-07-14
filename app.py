@@ -734,6 +734,10 @@ def begin_authentication():
                             transport_enums.append(AuthenticatorTransport.BLE)
                         elif transport_str == "internal":
                             transport_enums.append(AuthenticatorTransport.INTERNAL)
+                        elif transport_str == "cable":
+                            transport_enums.append(AuthenticatorTransport.CABLE)
+                        elif transport_str == "hybrid":
+                            transport_enums.append(AuthenticatorTransport.HYBRID)
                         else:
                             app.logger.warning(f"Unknown transport type: {transport_str}")
                     except Exception as e:
