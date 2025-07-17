@@ -23,8 +23,6 @@ import uuid
 from datetime import datetime, timedelta
 import secrets
 from collections import namedtuple
-from webauthn.helpers import parse_registration_credential_json, parse_authentication_credential_json
-from webauthn.helpers.exceptions import InvalidRegistrationResponse, InvalidAuthenticationResponse
 import binascii
 
 print("*** RUNNING UPDATED APP.PY WITH STRING USER_ID FIX ***")
@@ -361,11 +359,8 @@ def verify_registration():
             return jsonify({'verified': False, 'error': 'User not found'})
         
         # Parse the JSON dict to the required struct (handles base64 decoding internally)
-        credential = parse_registration_credential_json(credential_json)
-        
-        # Verify the registration - success if no exception
         verification = verify_registration_response(
-            credential=credential,
+            credential=credential_json,
             expected_challenge=challenge.challenge,  # Pass as bytes
             expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
             expected_rp_id=Config.get_webauthn_rp_id(),
@@ -630,27 +625,8 @@ def verify_authentication():
             return jsonify({'error': 'Challenge not found', 'verified': False}), 400
         
         # Parse credential JSON to struct (use library helper if available)
-        auth_credential = parse_authentication_credential_json(credential)
-        
-        # Fetch stored credential data for this cred_id (decode id from base64url)
-        cred_id_bytes = base64url_to_bytes(credential['id'])
-        db_credential = Credential.query.filter_by(credential_id=cred_id_bytes).first()
-        if not db_credential:
-            return jsonify({'error': 'Credential not found', 'verified': False}), 400
-        
-        # Type assertions for debugging
-        assert isinstance(db_credential.credential_id, bytes), f"Invalid stored cred_id type: {type(db_credential.credential_id)}"
-        assert isinstance(db_credential.public_key, bytes), f"Invalid public_key type: {type(db_credential.public_key)}"
-        assert isinstance(db_credential.sign_count, int), f"Invalid sign_count type: {type(db_credential.sign_count)}"
-        
-        # Get user
-        user = User.query.filter_by(id=db_credential.user_id).first()
-        if not user:
-            return jsonify({'error': 'User not found', 'verified': False}), 400
-        
-        # Verify - success if no exception
         verified_authentication = verify_authentication_response(
-            credential=auth_credential,
+            credential=credential,
             expected_challenge=stored_challenge,
             expected_rp_id=Config.get_webauthn_rp_id(),
             expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
@@ -667,7 +643,7 @@ def verify_authentication():
         db.session.commit()
         
         # Optional: Get user_handle (user_id bytes) for confirmation from the input credential
-        user_handle = auth_credential.response.user_handle  # bytes or None
+        user_handle = credential.response.user_handle  # bytes or None
         
         if user_handle:
             # Convert stored user.user_id to bytes if it's str (base64url-encoded)
@@ -716,22 +692,8 @@ def verify_cross_device_auth():
         session_id = stored_challenge_data['session_id']
         
         # Parse credential
-        auth_credential = parse_authentication_credential_json(credential)
-        
-        # Find credential in database
-        cred_id_bytes = base64url_to_bytes(credential['id'])
-        db_credential = Credential.query.filter_by(credential_id=cred_id_bytes).first()
-        if not db_credential:
-            return jsonify({'success': False, 'error': 'Credential not found'}), 400
-        
-        # Get user
-        user = User.query.filter_by(id=db_credential.user_id).first()
-        if not user:
-            return jsonify({'success': False, 'error': 'User not found'}), 400
-        
-        # Verify authentication
         verified_authentication = verify_authentication_response(
-            credential=auth_credential,
+            credential=credential,
             expected_challenge=stored_challenge,
             expected_rp_id=Config.get_webauthn_rp_id(),
             expected_origin=config_instance.WEBAUTHN_RP_ORIGIN,
